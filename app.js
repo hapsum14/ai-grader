@@ -4,7 +4,7 @@
 /* ================= 설정 ================= */
 const App = (() => {
   const KEY = 'aigrader-settings';
-  const DEF = { apiKey: '', model: 'gemini-2.5-flash', byteMin: 250, byteMax: 300 };
+  const DEF = { apiKey: '', model: 'gemini-flash-latest', byteMin: 250, byteMax: 300 };
   function settings() {
     try { return Object.assign({}, DEF, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { return Object.assign({}, DEF); }
   }
@@ -252,7 +252,8 @@ function vHome() {
   }).join('');
   after = () => dropzone($('#plandrop'), $('#planfile'), fs => startPlan({ file: fs[0] }));
   return `
-  ${key ? '' : `<div class="card note blue"><b>처음 쓰시나요?</b> 오른쪽 위 <b>설정</b>에서 Gemini API 키를 넣어야 AI 분석·채점·세특 작성이 됩니다. 키 없이도 수동 채점은 할 수 있습니다.</div>`}
+  ${key ? '' : `<div class="card note blue"><b>처음 쓰시나요?</b> <a href="${KEY_URL}" target="_blank" rel="noopener">Google AI Studio 에서 무료 API 키를 발급</a>받아 오른쪽 위 <b>설정</b>에 넣으면 AI 분석·채점·세특 작성이 됩니다. 키 없이도 수동 채점은 할 수 있습니다.
+    <div class="row" style="margin-top:8px"><button class="btn sm primary" data-act="settings">설정 열기</button><button class="btn sm" data-act="help" data-sec="key">키 발급 방법</button><button class="btn sm" data-act="help" data-sec="start">사용 순서</button></div></div>`}
   <div class="card">
     <div class="sec-h">${ICON.doc}평가계획서로 시작하기</div>
     <div class="drop" id="plandrop">
@@ -811,39 +812,112 @@ function vSeteuk(cid, cname) {
 }
 
 /* ================= 설정 ================= */
+const KEY_URL = 'https://aistudio.google.com/apikey';
+function cachedModels() { try { return JSON.parse(localStorage.getItem('aigrader-models') || '[]'); } catch (e) { return []; } }
+function modelOptions(ids, cur) {
+  const list = ids.length ? ids.map(AI.describe) : [AI.describe(cur)];
+  if (!list.some(m => m.id === cur)) list.unshift(AI.describe(cur));
+  const groups = {};
+  list.forEach(m => { const g = m.latest ? '항상 최신(추천)' : m.ver ? `Gemini ${m.ver}` : '기타'; (groups[g] = groups[g] || []).push(m); });
+  return Object.entries(groups).map(([g, ms]) => `<optgroup label="${esc(g)}">${ms.map(m => `<option value="${esc(m.id)}" ${m.id === cur ? 'selected' : ''}>${esc(m.label)}  —  ${esc(m.id)}</option>`).join('')}</optgroup>`).join('');
+}
 function settingsModal() {
   const s = App.settings();
   modal(`<h2>설정</h2>
     <label class="f">Gemini API 키</label>
     <div class="row" style="flex-wrap:nowrap"><input class="in" id="skey" type="password" value="${esc(s.apiKey)}" placeholder="AIza…" autocomplete="off"><button class="btn sm" id="sshow">보기</button></div>
-    <p class="small muted" style="margin:6px 0 0">Google AI Studio(aistudio.google.com)의 'Get API key'에서 만들 수 있습니다. 키는 이 브라우저에만 저장됩니다. 화면 시험만 하려면 <b>mock</b> 이라고 넣으세요.</p>
+    <div class="row" style="margin-top:8px"><a class="btn sm soft" href="${KEY_URL}" target="_blank" rel="noopener">API 키 발급받기 ↗</a>
+      <button class="btn sm ghost" data-act="help" data-sec="key">발급 방법 보기</button></div>
+    <p class="small muted" style="margin:6px 0 0">Google AI Studio 에서 무료로 만들 수 있습니다. 키는 이 브라우저에만 저장됩니다. 화면만 시험하려면 <b>mock</b> 이라고 넣으세요.</p>
     <label class="f">모델</label>
-    <div class="row" style="flex-wrap:nowrap"><input class="in" id="smodel" list="smodels" value="${esc(s.model)}"><datalist id="smodels"></datalist><button class="btn sm" id="stest">키 확인·모델 목록</button></div>
-    <p class="small muted" id="stestmsg" style="margin:6px 0 0">손글씨 인식이 중요하면 pro 계열이 더 정확하고, flash 계열은 빠르고 무료 한도가 넉넉합니다.</p>
+    <div class="row" style="flex-wrap:nowrap"><select class="in" id="smodel">${modelOptions(cachedModels(), s.model)}</select><button class="btn sm" id="stest">키 확인·최신 목록</button></div>
+    <p class="small muted" id="stestmsg" style="margin:6px 0 0"></p>
     <div class="row" style="gap:12px;margin-top:6px">
       <div><label class="f">세특 최소 바이트</label><input class="in num" id="smin" type="number" value="${s.byteMin}"></div>
       <div><label class="f">세특 최대 바이트</label><input class="in num" id="smax" type="number" value="${s.byteMax}"></div>
     </div>
     <div class="note" style="margin-top:14px"><b>개인정보 안내</b><br>무료 키(결제 미등록)로 보낸 내용은 Google 이 서비스 개선에 쓸 수 있습니다. 반드시 <b>이름 칸 가리기</b>를 하고 보내세요. 학교 지침상 외부 AI 사용 허가가 필요한지도 확인하세요.</div>
     <div class="foot"><button class="btn" data-act="close">닫기</button><button class="btn primary" id="ssave">저장</button></div>`);
+  const note = () => { const d = AI.describe($('#smodel').value); $('#stestmsg').innerHTML = d.note ? `${esc(d.label)}: ${esc(d.note)}` : ''; };
+  note(); $('#smodel').onchange = note;
   $('#sshow').onclick = () => { const k = $('#skey'); k.type = k.type === 'password' ? 'text' : 'password'; };
-  $('#stest').onclick = async () => {
-    const tmp = App.settings(); tmp.apiKey = $('#skey').value.trim(); App.saveSettings(tmp);
-    $('#stestmsg').textContent = '확인 중…';
+  const test = async quiet => {
+    const key = $('#skey').value.trim();
+    if (!key) { if (!quiet) $('#stestmsg').textContent = '키를 먼저 넣어 주세요.'; return; }
+    const tmp = App.settings(); tmp.apiKey = key; App.saveSettings(tmp);
+    $('#stestmsg').textContent = '키 확인과 모델 목록을 불러오는 중…';
     try {
-      const ms = await AI.listModels();
-      $('#smodels').innerHTML = ms.map(m => `<option value="${esc(m)}">`).join('');
-      $('#stestmsg').innerHTML = `키가 맞습니다. 쓸 수 있는 모델 ${ms.length}개: ${ms.slice(0, 12).map(esc).join(', ')}${ms.length > 12 ? ' …' : ''}`;
-      if (!ms.includes($('#smodel').value)) {
-        const pick = ms.find(m => /flash$/.test(m) && !/lite/.test(m)) || ms.find(m => /flash/.test(m)) || ms[0];
-        if (pick) { $('#smodel').value = pick; $('#stestmsg').innerHTML += `<br>지금 모델이 목록에 없어 <b>${esc(pick)}</b> 로 바꿨습니다.`; }
-      }
-    } catch (e) { $('#stestmsg').textContent = e.message; }
+      const list = await AI.listModels();
+      try { localStorage.setItem('aigrader-models', JSON.stringify(list.map(m => m.id))); } catch (e) {}
+      const cur = $('#smodel').value;
+      const keep = list.some(m => m.id === cur);
+      const pick = keep ? cur : AI.recommend(list);
+      $('#smodel').innerHTML = modelOptions(list.map(m => m.id), pick);
+      const newest = list.find(m => !m.latest);
+      $('#stestmsg').innerHTML = `<b style="color:var(--ok)">키가 맞습니다.</b> 쓸 수 있는 모델 ${list.length}개 · 가장 새 모델: ${esc(newest ? newest.label : '-')}` +
+        (keep ? '' : `<br>추천 모델 <b>${esc(AI.describe(pick).label)}</b> 로 골랐습니다.`);
+    } catch (e) { $('#stestmsg').innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
   };
+  $('#stest').onclick = () => test(false);
+  $('#skey').addEventListener('change', () => test(true));
   $('#ssave').onclick = () => {
-    App.saveSettings({ apiKey: $('#skey').value.trim(), model: $('#smodel').value.trim() || 'gemini-2.5-flash', byteMin: Number($('#smin').value) || 250, byteMax: Number($('#smax').value) || 300 });
+    App.saveSettings({ apiKey: $('#skey').value.trim(), model: $('#smodel').value || 'gemini-flash-latest', byteMin: Number($('#smin').value) || 250, byteMax: Number($('#smax').value) || 300 });
     closeModal(); rerender(); toast('저장했습니다.');
   };
+}
+
+/* ================= 도움말 ================= */
+const HELP = [
+  ['start', '처음 시작하기', `<ol>
+    <li>오른쪽 위 <b>설정</b>에 Gemini API 키를 넣습니다(아래 'API 키 발급' 참고).</li>
+    <li>처음 화면에 <b>평가계획서</b>(hwp·hwpx·pdf·txt)를 끌어 놓습니다. AI 가 수행평가 영역마다 채점 기준·점수 환산표·백지/결석 점수를 정리합니다.</li>
+    <li>과목 화면의 <b>채점 기준 보기·고치기</b>에서 내용을 확인하고 필요하면 고칩니다.</li>
+    <li><b>+ 반 추가</b>로 반 이름·학생 수·학생당 쪽 수와 답안 스캔 PDF 를 올립니다.</li>
+    <li><b>이름 칸 가리기</b>를 한 뒤 <b>AI 채점 한꺼번에</b> → 학생마다 확인 → <b>세특 한꺼번에 만들기</b> → <b>엑셀로 내보내기</b>.</li></ol>`],
+  ['key', 'API 키 발급 (무료)', `<ol>
+    <li><a href="${KEY_URL}" target="_blank" rel="noopener"><b>Google AI Studio 키 발급 페이지 ↗</b></a>를 엽니다(구글 계정으로 로그인).</li>
+    <li>처음이면 약관에 동의하고 <b>Create API key</b>(API 키 만들기)를 누릅니다. 프로젝트를 고르라고 하면 기본 프로젝트를 고르거나 새로 만듭니다.</li>
+    <li>만들어진 키(<code>AIza…</code>로 시작)를 <b>복사</b>합니다.</li>
+    <li>이 앱의 <b>설정</b> → API 키 칸에 붙여 넣고 <b>키 확인·최신 목록</b> → <b>저장</b>.</li></ol>
+    <p class="small muted">무료 키는 분당·하루 사용량 한도가 있습니다. 한 반을 한꺼번에 채점하다 '사용량 한도'가 뜨면 잠시 뒤 이어서 하세요. AI Studio 에서 결제를 등록하면 한도가 크게 늘고 보낸 내용이 학습에 쓰이지 않습니다. 키는 비밀번호처럼 다른 사람과 나누지 마세요.</p>`],
+  ['model', '모델 고르기', `<ul>
+    <li><b>항상 최신 Flash</b>(추천): Google 이 새 Flash 모델을 내면 저절로 그 모델을 씁니다. 속도·정확도·무료 한도의 균형이 좋습니다.</li>
+    <li><b>Pro</b>: 손글씨가 흐리거나 서술이 길 때 더 정확합니다. 느리고 무료 한도가 적습니다.</li>
+    <li><b>Flash-Lite</b>: 가장 빠르지만 손글씨 인식은 약합니다.</li>
+    <li>설정의 <b>키 확인·최신 목록</b>을 누르면 그 키로 쓸 수 있는 모델을 새 버전부터 보여 줍니다. 고른 모델이 없어지면 앱이 추천 모델로 바꿔 다시 시도합니다.</li></ul>`],
+  ['class', '답안 나누기·이름 가리기', `<ul>
+    <li>한 PDF 에 반 학생 답안이 번호 순서로 들어 있으면 <b>학생당 쪽 수</b>로 나눠 번호를 붙입니다.</li>
+    <li>결시한 번호는 <b>미응시 번호</b>를 눌러 표시하면 그 번호를 건너뛰고 다시 번호를 붙입니다.</li>
+    <li>쪽 위의 <b>새 학생 / 이어붙이기</b>로 나뉜 자리를, <b>빼기</b>로 표지·빈 쪽을, 번호 칸으로 번호를 직접 고칩니다.</li>
+    <li><b>이름 칸 가리기</b>: 첫 쪽의 학번·이름 칸을 끌어서 상자로 덮습니다. 스캔마다 위치가 조금 다르니 <b>넉넉하게</b> 그리고 ‹ › 로 다른 번호도 확인하세요. 화면에는 원본이 보이고 AI 로 보낼 때만 검게 칠합니다(채점 화면의 '가림 보기'로 확인).</li></ul>`],
+  ['grade', '채점하기', `<ul>
+    <li>왼쪽 원본(또는 <b>인식 결과</b> = AI 가 옮겨 적은 답), 오른쪽에 채점 기준 체크와 점수.</li>
+    <li><b>AI 채점 실행</b>: 기준마다 충족/미충족과 근거(학생 답 인용)를 보여 주고, 아직 손대지 않은 학생이면 체크를 미리 채워 둡니다. 최종 점수는 선생님이 확인해 <b>채점 완료</b>를 누릅니다.</li>
+    <li>점수 단추(20·18…)로 바로 정하거나, 백지·결석 단추로 특수 점수를 줄 수 있습니다. <b>미제출/미응시</b>는 위쪽 동그라미로 고릅니다.</li>
+    <li>단축키: <span class="kbd">←</span><span class="kbd">→</span> 학생 이동 · <span class="kbd">1</span>~<span class="kbd">9</span> 기준 체크 · <span class="kbd">Ctrl</span>+<span class="kbd">Enter</span> 채점 완료 후 다음 · <span class="kbd">?</span> 도움말.</li></ul>`],
+  ['seteuk', '세특 초안', `<ul>
+    <li>수행평가 한 개 몫으로 약 250~300바이트(설정에서 바꿈)를 씁니다. 바이트는 나이스 기준(한글 3, 영문·숫자·공백 1)으로 앱이 직접 셉니다.</li>
+    <li>채점 결과·인식한 답안·AI 관찰 요약·<b>선생님 관찰 메모</b>를 재료로 씁니다. 메모에 수업 중 모습을 적으면 더 개별화됩니다.</li>
+    <li>교사 관찰 시점(~함/~보임), 금지어(나의·내가·대회), 특수문자, 상호명, 학생 입장 종결어(~느낌·~깨달음)를 검사해 빨간 글씨로 알려 줍니다.</li>
+    <li>과목 화면의 <b>반별 세특 모아보기</b>에서 수행평가별 문장을 이어 붙인 길이(1,500B 한도)를 볼 수 있습니다.</li></ul>`],
+  ['save', '저장·옮기기·개인정보', `<ul>
+    <li>모든 기록과 답안 그림은 <b>이 브라우저</b>에만 저장됩니다. 브라우저 기록 삭제·시크릿 창에서는 사라질 수 있습니다.</li>
+    <li>다른 컴퓨터로 옮길 때: 처음 화면 <b>백업 저장</b> → 새 컴퓨터에서 <b>백업 불러오기</b> → 반 화면에서 같은 PDF 를 <b>다시 연결</b>(답안 그림은 백업에 들어가지 않음).</li>
+    <li>AI 를 쓸 때만 가림 처리한 답안 그림과 채점 기준이 Google 로 전송됩니다.</li></ul>`],
+  ['faq', '자주 나오는 문제', `<ul>
+    <li><b>API 키가 맞지 않습니다</b>: 키 앞뒤 빈칸 없이 다시 복사해 넣으세요.</li>
+    <li><b>사용량 한도</b>: 무료 한도를 다 썼습니다. 1분쯤 뒤 다시 하거나 Flash 모델로 바꾸세요.</li>
+    <li><b>모델을 찾을 수 없음</b>: 설정에서 <b>키 확인·최신 목록</b>을 눌러 모델을 다시 고르세요.</li>
+    <li><b>한글 파일을 못 읽음</b>: 배포용·암호 문서는 한글에서 PDF 로 저장해 올리세요.</li>
+    <li><b>PDF 를 그림으로 바꾸는 게 느림</b>: 쪽이 많으면 1~2분 걸립니다. 다른 탭에 가 있어도 계속됩니다.</li></ul>`],
+];
+function helpModal(sec) {
+  modal(`<h2>도움말</h2>
+    <div class="row" style="gap:6px;margin-bottom:12px">${HELP.map(h => `<button class="chip ${h[0] === sec ? 'on' : ''}" data-hsec="${h[0]}">${esc(h[1])}</button>`).join('')}</div>
+    <div class="help">${HELP.map(h => `<section id="h-${h[0]}"><h3>${esc(h[1])}</h3>${h[2]}</section>`).join('')}</div>
+    <div class="foot"><button class="btn" data-act="close">닫기</button></div>`, true);
+  $$('[data-hsec]').forEach(b => b.onclick = () => { $$('[data-hsec]').forEach(x => x.classList.toggle('on', x === b)); $('#h-' + b.dataset.hsec).scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  if (sec) setTimeout(() => { const el = $('#h-' + sec); if (el) el.scrollIntoView({ block: 'start' }); }, 30);
 }
 
 /* ================= 엑셀 ================= */
@@ -885,6 +959,7 @@ function xlsxAll(cid, cname) {
 const ACT = {
   close: closeModal,
   settings: settingsModal,
+  help(el) { helpModal(el && el.dataset && el.dataset.sec); },
   theme() {
     const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     r.dataset.theme = dark ? 'light' : 'dark'; try { localStorage.setItem('aigrader-theme', r.dataset.theme); } catch (e) {}
@@ -1080,6 +1155,7 @@ document.addEventListener('click', e => {
   if (go && !e.target.closest('a,button,input,select,textarea')) location.hash = go.dataset.go;
 });
 document.addEventListener('keydown', e => {
+  if (e.key === '?' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && $('#modal').classList.contains('hide')) { helpModal(); return; }
   if (!location.hash.startsWith('#/g/') || !gctx) { if (e.key === 'Escape') closeModal(); return; }
   if (!$('#modal').classList.contains('hide')) { if (e.key === 'Escape') closeModal(); return; }
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && document.activeElement.type !== 'checkbox' && document.activeElement.type !== 'radio';

@@ -190,3 +190,10 @@ body.grading main{max-width:none;padding:0}
   .crit{grid-template-columns:22px 1fr 60px 30px}
 }
 @media print{#top,.noprint{display:none!important}}
+
+/* help */
+.help section{padding:6px 0 14px;border-bottom:1px solid var(--line)}
+.help section:last-child{border-bottom:none}
+.help h3{font-size:16px;margin:8px 0 6px}
+.help ol,.help ul{margin:0;padding-left:22px;line-height:1.8;font-size:14px}
+.help code{font:13px ui-monospace,Consolas,monospace;background:var(--bg);padding:1px 5px;border-radius:5px}

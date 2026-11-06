@@ -13,14 +13,17 @@ const AI = (() => {
   const cfg = () => App.settings();
   const isMock = () => (cfg().apiKey || '').trim().toLowerCase() === 'mock';
 
-  async function call({ system, parts, schema, temperature = 0.2, signal }) {
+  async function call(opts, retried) {
+    const { system, parts, schema, temperature = 0.2, signal } = opts;
     const { apiKey, model } = cfg();
     if (!apiKey) throw new Error('설정에서 Gemini API 키를 먼저 넣어 주세요.');
     const body = {
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: 'user', parts }],
-      generationConfig: { temperature, responseMimeType: 'application/json', responseSchema: schema },
+      generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
     };
+    // Gemini 3 이상(·항상 최신)은 기본 temperature 1.0 을 권장 — 낮추면 답이 되풀이될 수 있어 2.x 에만 넣는다
+    if (modelVersion(model) < 3) body.generationConfig.temperature = temperature;
     let wait = 4000;
     for (let attempt = 0; ; attempt++) {
       const r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
@@ -46,7 +49,21 @@ const AI = (() => {
       }
       if (r.status === 400 && /API key/i.test(msg)) throw new Error('API 키가 올바르지 않습니다. 설정에서 다시 확인해 주세요.');
       if (r.status === 403) throw new Error('이 키로는 Gemini 를 쓸 수 없습니다(403): ' + msg);
-      if (r.status === 404) throw new Error('모델 이름을 찾을 수 없습니다(' + model + '). 설정에서 모델을 바꿔 주세요.');
+      if (r.status === 404) {
+        // 고른 모델이 없어졌으면 그 키로 쓸 수 있는 추천 모델로 바꿔 한 번 더
+        if (!retried) {
+          try {
+            const list = await listModels();
+            const pick = recommend(list);
+            if (pick && pick !== model) {
+              const s = cfg(); s.model = pick; App.saveSettings(s);
+              try { localStorage.setItem('aigrader-models', JSON.stringify(list.map(m => m.id))); } catch (e) {}
+              return call(opts, true);
+            }
+          } catch (e) { /* 아래 안내로 */ }
+        }
+        throw new Error('모델 이름을 찾을 수 없습니다(' + model + '). 설정에서 "키 확인·최신 목록"을 눌러 모델을 다시 고르세요.');
+      }
       if (r.status === 429) throw new Error('사용량 한도에 걸렸습니다. 잠시 뒤 다시 시도하거나 다른 모델을 고르세요.');
       throw new Error('AI 호출 실패(' + r.status + '): ' + msg);
     }
@@ -58,18 +75,47 @@ const AI = (() => {
     });
   }
 
+  // 모델 이름 → { id, ver, tier, preview, latest, label, note }
+  function describe(id) {
+    const m = id.match(/^gemini-(\d+(?:\.\d+)?)-(pro|flash-lite|flash)(.*)$/);
+    const alias = id.match(/^gemini-(pro|flash-lite|flash)-latest$/);
+    const tierName = { pro: 'Pro', flash: 'Flash', 'flash-lite': 'Flash-Lite' };
+    const tierNote = { pro: '가장 정확 · 느리고 무료 한도 적음', flash: '정확도와 속도 균형 · 추천', 'flash-lite': '가장 빠름 · 손글씨 인식은 약함' };
+    if (alias) return { id, ver: 99, tier: alias[1], preview: false, latest: true, label: `항상 최신 ${tierName[alias[1]]}`, note: tierNote[alias[1]] + ' · 새 모델이 나오면 저절로 바뀜' };
+    if (!m) return { id, ver: 0, tier: '', preview: /preview|exp/.test(id), latest: false, label: id, note: '' };
+    const rest = m[3] || '';
+    const preview = /preview|exp/.test(rest);
+    return { id, ver: Number(m[1]), tier: m[2], preview, latest: false, label: `Gemini ${m[1]} ${tierName[m[2]]}${preview ? ' (미리보기' + ((rest.match(/(\d{2})-(\d{4})/) || []).length ? ' ' + rest.match(/(\d{2})-(\d{4})/)[2] + '.' + rest.match(/(\d{2})-(\d{4})/)[1] : '') + ')' : ''}`, note: tierNote[m[2]] };
+  }
+  const TIER = { flash: 0, pro: 1, 'flash-lite': 2, '': 3 };
+  function sortModels(ids) {
+    return ids.map(describe).sort((a, b) =>
+      (b.latest - a.latest) || (b.ver - a.ver) || (TIER[a.tier] - TIER[b.tier]) || (a.preview - b.preview) || a.id.localeCompare(b.id));
+  }
+  // 채점에 알맞은 모델 하나: 항상 최신 Flash → 가장 새 Flash → 가장 새 Pro
+  function recommend(list) {
+    return (list.find(m => m.latest && m.tier === 'flash') || list.find(m => !m.latest && m.tier === 'flash') || list.find(m => m.tier === 'pro') || list[0] || {}).id;
+  }
+  function modelVersion(id) { const d = describe(id); return d.latest ? 99 : d.ver; }
+
   async function listModels() {
     const { apiKey } = cfg();
-    if (isMock()) return ['gemini-2.5-flash', 'gemini-2.5-pro'];
-    const r = await fetch(`${BASE}/models?pageSize=200`, { headers: { 'x-goog-api-key': (apiKey || '').trim() } });
-    if (!r.ok) {
-      let msg = ''; try { msg = (await r.json()).error.message; } catch (e) {}
-      throw new Error('키 확인 실패(' + r.status + ') ' + msg);
-    }
-    const j = await r.json();
-    return (j.models || [])
-      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent') && /gemini/.test(m.name) && !/(embedding|tts|image|audio|live|vision)/.test(m.name))
-      .map(m => m.name.replace(/^models\//, ''));
+    if (isMock()) return sortModels(['gemini-flash-latest', 'gemini-pro-latest', 'gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']);
+    const ids = []; let token = '';
+    do {
+      const r = await fetch(`${BASE}/models?pageSize=200${token ? '&pageToken=' + token : ''}`, { headers: { 'x-goog-api-key': (apiKey || '').trim() } });
+      if (!r.ok) {
+        let msg = ''; try { msg = (await r.json()).error.message; } catch (e) {}
+        throw new Error(r.status === 400 || r.status === 403 ? 'API 키가 맞지 않습니다. 키를 다시 복사해 넣어 주세요.' : '키 확인 실패(' + r.status + ') ' + msg);
+      }
+      const j = await r.json();
+      (j.models || []).forEach(m => {
+        const id = m.name.replace(/^models\//, '');
+        if ((m.supportedGenerationMethods || []).includes('generateContent') && /^gemini-/.test(id) && !/(embedding|tts|image|audio|live|vision|robotics|computer-use|native|thinking|learnlm|aqa)/.test(id)) ids.push(id);
+      });
+      token = j.nextPageToken || '';
+    } while (token);
+    return sortModels([...new Set(ids)]);
   }
 
   // ---------- 1. 평가계획서 → 수행평가 채점 기준 ----------
@@ -224,5 +270,5 @@ const AI = (() => {
     return { text: t, level: '분석' };
   }
 
-  return { call, listModels, extractPlan, makeGuide, grade, seteuk, isMock };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock };
 })();
