@@ -107,6 +107,54 @@ const Parse = (() => {
     return out.join('\n');
   }
 
+  // 평가계획서 글에서 수행평가 채점에 필요한 부분만 남긴다(월별 수업 계획·성취기준별 성취수준·평가 방침은 뺌)
+  // 흔한 양식: … 4. 평가의 종류와 반영비율(표) → 5. 성취도 → 6. 정의적 능력 평가 → 7. 수행평가(목적·방침) → 라. 영역별 세부평가 기준
+  function planFocus(text) {
+    if (!text || text.length < 6000) return text;
+    const lastOf = (ks, from = 0) => { let best = -1; for (const k of ks) { const i = text.lastIndexOf(k); if (i >= from && i > best) best = i; } return best; };
+    const firstOf = (ks, from = 0) => { let best = -1; for (const k of ks) { const i = text.indexOf(k, from); if (i >= 0 && (best < 0 || i < best)) best = i; } return best; };
+    let start = lastOf(['평가의 종류와 반영', '평가의 종류 및 반영', '평가 종류와 반영', '평가 영역 및 반영']);
+    const detail = firstOf(['세부평가 기준', '세부 평가 기준', '세부평가기준', '영역별 평가 기준', '수행평가 세부'], Math.max(0, start));
+    if (start < 0) {
+      if (detail < 0) return text;
+      start = detail;
+    }
+    // 반영비율 표 ~ 정의적 능력 평가 앞까지 + 세부평가 기준부터 끝까지
+    const mid = firstOf(['정의적 능력', '정의적 영역'], start);
+    let out = text.slice(start, mid > start && detail > mid ? mid : (detail > start ? detail : text.length));
+    if (detail > start) out += '\n…\n' + text.slice(Math.max(0, text.lastIndexOf('\n', detail - 1) - 40), text.length);
+    return out.length > 1500 ? out : text;
+  }
+
+  // AI 가 돌려준 영역 이름·성취기준 코드로, 계획서 글에서 성취기준 문장과 성취수준(A~E)을 직접 찾아 채운다
+  function planDetails(text, name, codes) {
+    const norm = s => String(s || '').replace(/\s+/g, '');
+    const out = { standards: [], levels: [] };
+    (codes || []).forEach(c => {
+      const code = (String(c).match(/\[[^\]]+\]/) || [String(c)])[0];
+      const m = text.match(new RegExp(code.replace(/[[\]()]/g, '\\$&') + '\\s*([^\\n\\[]{8,})'));
+      out.standards.push({ code, text: m ? m[1].replace(/\s+/g, ' ').trim() : '' });
+    });
+    // 영역 제목(예: "1) 효소실험탐구 [20점]") 뒤 구간에서 A~E 줄을 읽는다
+    const lines = text.split('\n');
+    let i = lines.findIndex(l => /^\s*\d+\)/.test(l) && norm(l).includes(norm(name)));
+    if (i < 0) return out;
+    let end = lines.findIndex((l, k) => k > i && /^\s*\d+\)\s*\S/.test(l) && /\[\s*\d+\s*점\s*\]/.test(l));
+    if (end < 0) end = lines.length;
+    const sec = lines.slice(i, end);
+    const s0 = sec.findIndex(l => /성취수준/.test(l));
+    if (s0 < 0) return out;
+    let cur = null;
+    for (const l of sec.slice(s0 + 1)) {
+      const t = l.trim();
+      if (/^(평가\s*방법|평가\s*요소|수행\s*수준|척도|배점)/.test(t)) break;
+      if (/^[A-E]$/.test(t)) { cur = { grade: t, text: '' }; out.levels.push(cur); continue; }
+      if (cur && t) cur.text += (cur.text ? ' ' : '') + t;
+    }
+    out.levels = out.levels.filter(l => l.text);
+    return out;
+  }
+
   // 평가계획서 → { text, pdfBase64? }
   async function planFile(file) {
     const name = file.name.toLowerCase();
@@ -199,5 +247,5 @@ const Parse = (() => {
     } finally { URL.revokeObjectURL(url); }
   }
 
-  return { planFile, filePages, maskedBase64, hwpToText, hwpxToText, toBase64 };
+  return { planFile, planFocus, planDetails, filePages, maskedBase64, hwpToText, hwpxToText, toBase64 };
 })();

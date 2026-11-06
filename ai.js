@@ -24,27 +24,50 @@ const AI = (() => {
     };
     // Gemini 3 이상(·항상 최신)은 기본 temperature 1.0 을 권장 — 낮추면 답이 되풀이될 수 있어 2.x 에만 넣는다
     if (modelVersion(model) < 3) body.generationConfig.temperature = temperature;
+    // 생각하기(thinking)를 줄여 빠르게: 정리·옮겨 쓰기처럼 단순한 일에만(opts.think = 'low')
+    const tc = opts.think === 'low' && !opts._noThink ? thinkCfg(model) : null;
+    if (tc) body.generationConfig.thinkingConfig = tc;
+    const stream = typeof opts.onText === 'function';
     let wait = 4000;
     for (let attempt = 0; ; attempt++) {
-      const r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+      const r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`, {
         method: 'POST', signal,
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
         body: JSON.stringify(body),
       });
       if (r.ok) {
-        const j = await r.json();
-        const cand = j.candidates && j.candidates[0];
-        const txt = cand && cand.content && (cand.content.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
-        if (!txt) {
-          const why = (cand && cand.finishReason) || (j.promptFeedback && j.promptFeedback.blockReason) || '빈 응답';
-          throw new Error('AI 가 답을 주지 않았습니다(' + why + ').');
-        }
+        let txt = '', why = '';
+        const take = j => {
+          const cand = j.candidates && j.candidates[0];
+          if (cand && cand.content) txt += (cand.content.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+          why = (cand && cand.finishReason) || (j.promptFeedback && j.promptFeedback.blockReason) || why;
+        };
+        if (stream) {
+          // 받는 대로 글자 수를 알려 준다(server-sent events: "data: {...}")
+          const rd = r.body.getReader(), dec = new TextDecoder();
+          let buf = '';
+          for (;;) {
+            const { value, done } = await rd.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let k;
+            while ((k = buf.indexOf('\n')) >= 0) {
+              const line = buf.slice(0, k).trim(); buf = buf.slice(k + 1);
+              if (line.startsWith('data:')) { try { take(JSON.parse(line.slice(5))); opts.onText(txt.length); } catch (e) {} }
+            }
+          }
+          if (buf.trim().startsWith('data:')) { try { take(JSON.parse(buf.trim().slice(5))); } catch (e) {} }
+        } else take(await r.json());
+        if (!txt) throw new Error('AI 가 답을 주지 않았습니다(' + (why || '빈 응답') + ').');
         try { return JSON.parse(txt); }
-        catch (e) { throw new Error('AI 응답을 읽지 못했습니다. 다시 시도해 주세요.'); }
+        catch (e) { throw new Error(why === 'MAX_TOKENS' ? 'AI 답이 너무 길어 잘렸습니다. 계획서에서 수행평가 부분만 붙여 넣어 다시 해 보세요.' : 'AI 응답을 읽지 못했습니다. 다시 시도해 주세요.'); }
       }
       let msg = '';
       try { msg = (await r.json()).error.message; } catch (e) { msg = r.statusText; }
+      // 이 모델이 생각하기 설정을 모르면 설정 없이 다시
+      if (r.status === 400 && tc && /think/i.test(msg)) return call(Object.assign({}, opts, { _noThink: true }), retried);
       if ((r.status === 429 || r.status === 503 || r.status === 500) && attempt < 4) {
+        opts.onWait && opts.onWait(Math.round(wait / 1000));
         await sleep(wait, signal); wait *= 2; continue;
       }
       if (r.status === 400 && /API key/i.test(msg)) throw new Error('API 키가 올바르지 않습니다. 설정에서 다시 확인해 주세요.');
@@ -96,6 +119,12 @@ const AI = (() => {
   function recommend(list) {
     return (list.find(m => m.latest && m.tier === 'flash') || list.find(m => !m.latest && m.tier === 'flash') || list.find(m => m.tier === 'pro') || list[0] || {}).id;
   }
+  function thinkCfg(id) {
+    const d = describe(id);
+    if (d.latest || d.ver >= 3) return { thinkingLevel: 'low' };
+    if (d.ver >= 2.5) return { thinkingBudget: d.tier === 'pro' ? 128 : 0 }; // 2.5 Pro 는 끌 수 없어 최소값
+    return null;
+  }
   function modelVersion(id) { const d = describe(id); return d.latest ? 99 : d.ver; }
 
   async function listModels() {
@@ -127,11 +156,9 @@ const AI = (() => {
       method: S('평가 방법(논술형, 실험실습 등)'),
       period: S('평가 시기'),
       assignment: S('수행 과제 설명'),
-      standards: A(O({ code: S('성취기준 코드'), text: S('성취기준 문장') })),
-      levels: A(O({ grade: S('A~E'), text: S('성취수준 설명') })),
-      elements: A(S('평가 요소')),
+      standards: A(S('이 영역의 성취기준 코드만(예: [12세포02-03])')),
       mode: { type: 'STRING', enum: ['count', 'points'], description: 'count = 충족한 항목 수로 점수를 정함, points = 항목마다 배점을 더함' },
-      criteria: A(O({ text: S('채점 기준 항목 문장(원문 그대로)'), points: N('points 방식이면 그 항목 배점, count 방식이면 0'), guide: S('이 항목을 충족으로 볼 판단 기준(무엇이 들어가면 충족인지 1~2문장)') })),
+      criteria: A(O({ text: S('채점 기준 항목 문장(원문 그대로)'), points: N('points 방식이면 그 항목 배점, count 방식이면 0') })),
       scale: A(O({ count: I('충족 항목 수'), score: N('점수') }), 'count 방식의 환산표. 0개(기본점수)까지 포함'),
       specials: A(O({ label: S('특수 상황(백지 제출, 미참여, 장기 미인정 결석 등)'), score: N('점수') })),
     }, ['name', 'maxScore', 'mode', 'criteria', 'scale', 'specials'])),
@@ -144,17 +171,17 @@ const AI = (() => {
 - "6개 항목 충족한 경우 20점, 5개 18점 …, 하나도 충족하지 못한 경우(기본점수) 8점" 같은 표는 mode='count' 이고 scale 에 count 0 까지 모두 적는다.
 - 항목마다 배점이 따로 있으면 mode='points', criteria.points 에 배점을 적고 scale 은 빈 배열.
 - "백지 제출자, 자발적 미참여자 7점", "장기 미인정 결석자 6점" 같은 특수 상황은 specials 에 적는다.
-- guide 는 계획서의 성취기준·성취수준·평가요소를 근거로, 학생 답안에 무엇이 들어 있으면 그 항목을 충족으로 볼지 1~2문장으로 쓴다.
-- levels 에는 그 영역 표에 있는 성취기준별 성취수준(A~E)을 옮긴다. 없으면 빈 배열.
+- 성취수준 설명이나 평가 방침 같은 긴 글은 옮기지 않는다(앱이 따로 읽는다). 짧게 답한다.
 - 계획서에 없는 내용은 지어내지 않는다.`;
 
-  async function extractPlan({ text, pdf, mime }) {
-    if (isMock()) return mockPlan();
+  // text = 앱이 수행평가 부분만 잘라 낸 글. 글을 뽑을 수 없는 스캔 PDF 만 파일째 보낸다.
+  async function extractPlan({ text, pdf, mime }, onText, onWait) {
+    if (isMock()) { for (let i = 1; i <= 5; i++) { await sleep(150); onText && onText(i * 300); } return mockPlan(); }
     const parts = [];
-    if (pdf) parts.push({ inline_data: { mime_type: mime || 'application/pdf', data: pdf } });
-    if (text) parts.push({ text: '평가계획서 본문:\n' + text.slice(0, 120000) });
+    if (pdf && (!text || text.trim().length < 300)) parts.push({ inline_data: { mime_type: mime || 'application/pdf', data: pdf } });
+    else if (text) parts.push({ text: '평가계획서(수행평가 부분):\n' + text.slice(0, 60000) });
     parts.push({ text: '위 평가계획서에서 수행평가 영역별 채점 기준을 JSON 으로 뽑아 주세요.' });
-    return call({ system: PLAN_SYS, parts, schema: PLAN_SCHEMA, temperature: 0.1 });
+    return call({ system: PLAN_SYS, parts, schema: PLAN_SCHEMA, temperature: 0.1, think: 'low', onText, onWait });
   }
 
   // ---------- 2. 채점 지침 다듬기(문항지를 보고) ----------
@@ -226,7 +253,7 @@ const AI = (() => {
     parts.push({ text: '이 학생의 자료:\n' + info });
     parts.push({ text: `분량: ${range[0]}~${range[1]}바이트(한글 약 ${Math.round(range[0] / 3)}~${Math.round(range[1] / 3)}자).` });
     if (prev) parts.push({ text: `직전 초안은 ${prev.bytes}바이트라서 범위를 벗어났습니다. ${prev.bytes > range[1] ? '내용을 압축해' : '그 학생 답의 구체적 내용을 더해'} ${range[0]}~${range[1]}바이트로 다시 써 주세요.\n직전 초안: ${prev.text}` });
-    return call({ system: SETEUK_SYS, parts, schema: SETEUK_SCHEMA, temperature: 0.6, signal });
+    return call({ system: SETEUK_SYS, parts, schema: SETEUK_SCHEMA, temperature: 0.6, signal, think: 'low' });
   }
 
   function taskBrief(task, withGuide) {
@@ -234,7 +261,7 @@ const AI = (() => {
     L.push(`과목: ${task._subject || ''}`);
     L.push(`수행평가: ${task.name} (만점 ${task.maxScore}점, ${task.method || ''})`);
     if (task.assignment) L.push(`수행 과제: ${task.assignment}`);
-    if (task.standards && task.standards.length) L.push('성취기준:\n' + task.standards.map(s => `${s.code} ${s.text}`).join('\n'));
+    if (task.standards && task.standards.length) L.push('성취기준:\n' + task.standards.map(s => typeof s === 'string' ? s : `${s.code} ${s.text}`).join('\n'));
     if (task.levels && task.levels.length) L.push('성취수준:\n' + task.levels.map(l => `${l.grade}: ${l.text}`).join('\n'));
     L.push(`채점 방식: ${task.mode === 'points' ? '항목별 배점 합산' : '충족한 항목 수로 점수 결정'}`);
     L.push('채점 기준 항목:\n' + task.criteria.map((c, i) => `${i + 1}. ${c.text}${task.mode === 'points' ? ` (${c.points}점)` : ''}${withGuide && c.guide ? `\n   - 판단 기준: ${c.guide}` : ''}`).join('\n'));
@@ -248,10 +275,8 @@ const AI = (() => {
       tasks: [{
         name: '효소실험탐구', maxScore: 20, method: '논술형', period: '10월 3주',
         assignment: '효소의 활성에 온도와 pH가 미치는 영향 및 효소가 실생활에 사용되는 예를 탐구한다.',
-        standards: [{ code: '[12세포02-03]', text: '효소의 종류와 특성을 이해하고 효소의 활성에 영향을 미치는 요인에 대한 실험을 설계하여 수행할 수 있다.' }],
-        levels: [{ grade: 'A', text: '효소의 종류를 기능에 따라 구분하고 …' }],
-        elements: ['효소 활성에 영향을 미치는 요인 탐구'], mode: 'count',
-        criteria: ['효소의 종류를 기능에 따라 구분하고 그 이유를 논리적으로 서술하였는가', '주어진 자료를 보고 효소 활성에 영향을 미치는 요인을 분석할 수 있는가', '효소의 활성에 미치는 영향(온도, pH)을 고려하여 실험을 설계하였는가', '효소의 작용 기작을 이해하고 효소기질 복합체 형성 과정을 서술하였는가', '효소가 생활과 산업에 이용되는 사례를 제시하였는가', '생활과 산업에 이용되는 효소의 원리를 기능과 특성의 관점에서 서술하였는가'].map(t => ({ text: t, points: 0, guide: '(모의) 핵심 개념과 이유가 함께 있으면 충족' })),
+        standards: ['[12세포02-03]', '[12세포02-04]', '[12세포02-05]'], mode: 'count',
+        criteria: ['효소의 종류를 기능에 따라 구분하고 그 이유를 논리적으로 서술하였는가', '주어진 자료를 보고 효소 활성에 영향을 미치는 요인을 분석할 수 있는가', '효소의 활성에 미치는 영향(온도, pH)을 고려하여 실험을 설계하였는가', '효소의 작용 기작을 이해하고 효소기질 복합체 형성 과정을 서술하였는가', '효소가 생활과 산업에 이용되는 사례를 제시하였는가', '생활과 산업에 이용되는 효소의 원리를 기능과 특성의 관점에서 서술하였는가'].map(t => ({ text: t, points: 0 })),
         scale: [6, 5, 4, 3, 2, 1, 0].map((c, i) => ({ count: c, score: [20, 18, 16, 14, 12, 10, 8][i] })),
         specials: [{ label: '백지 제출자, 자발적 미참여자', score: 7 }, { label: '장기 미인정 결석자', score: 6 }],
       }],

@@ -273,24 +273,43 @@ function vHome() {
 }
 
 async function startPlan(src) {
-  modal(`<h2>평가계획서 분석</h2><p id="pmsg">파일을 읽는 중…</p><div class="prog"><i style="width:30%"></i></div>`);
+  modal(`<h2>평가계획서 분석</h2><p id="pmsg">파일을 읽는 중…</p><div class="prog"><i style="width:15%"></i></div>
+    <p class="small muted" id="psub" style="margin:8px 0 0"></p>`);
   $('#modal').dataset.lock = '1';
+  const t0 = Date.now(); let got = 0, phase = '', timer = null;
+  const tick = () => {
+    const sec = Math.round((Date.now() - t0) / 1000);
+    const el = $('#psub'); if (!el) return;
+    el.textContent = `${sec}초 지남${got ? ` · 받은 글 ${got.toLocaleString()}자` : ''}${phase}`;
+    // 받은 양에 맞춰 막대를 채운다(끝을 모르니 천천히 90% 까지)
+    const bar = $('.prog i'); if (bar) bar.style.width = Math.min(90, 35 + (got ? 20 + got / 60 : sec * 1.2)) + '%';
+  };
   try {
     const data = src.file ? await Parse.planFile(src.file) : { text: src.text };
-    $('#pmsg').textContent = `글 ${(data.text || '').length.toLocaleString()}자를 읽었습니다. AI 가 수행평가 채점 기준을 정리하는 중… (30초~1분)`;
-    $('.prog i').style.width = '65%';
-    const r = await AI.extractPlan(data);
+    const full = data.text || '';
+    const focus = Parse.planFocus(full);
+    const send = Object.assign({}, data, { text: focus === full ? full : full.slice(0, 300) + '\n…\n' + focus });
+    $('#pmsg').innerHTML = focus === full
+      ? `글 ${full.length.toLocaleString()}자를 읽었습니다. AI 가 수행평가 채점 기준을 정리하는 중…`
+      : `글 ${full.length.toLocaleString()}자 가운데 수행평가 부분 <b>${focus.length.toLocaleString()}자</b>만 골라 AI 가 채점 기준을 정리하는 중…`;
+    timer = setInterval(tick, 500); tick();
+    const r = await AI.extractPlan(send, n => { got = n; phase = ''; }, s => { phase = ` · 서버가 바빠 ${s}초 뒤 다시 시도`; });
+    clearInterval(timer);
     const c = {
       id: uid(), name: r.subject || (src.file ? src.file.name : '새 과목'), grade: r.grade || '', semester: r.semester || '', year: r.school_year || '',
-      planName: src.file ? src.file.name : '붙여넣은 글', planText: data.text || '', createdAt: Date.now(),
-      tasks: (r.tasks || []).map(t => newTask(t)),
+      planName: src.file ? src.file.name : '붙여넣은 글', planText: full, createdAt: Date.now(),
+      tasks: (r.tasks || []).map(t => {
+        const d = Parse.planDetails(full, t.name, t.standards);
+        return newTask(Object.assign({}, t, { standards: d.standards, levels: d.levels }));
+      }),
     };
     if (!c.tasks.length) throw new Error('수행평가 영역을 찾지 못했습니다. 계획서 내용을 확인해 주세요.');
     S.courses.unshift(c); save(true);
     delete $('#modal').dataset.lock; closeModal();
-    toast(`수행평가 ${c.tasks.length}개를 찾았습니다. 채점 기준을 확인해 주세요.`, 3500);
+    toast(`${Math.round((Date.now() - t0) / 1000)}초 만에 수행평가 ${c.tasks.length}개를 찾았습니다. 채점 기준을 확인해 주세요.`, 3500);
     location.hash = '#/c/' + c.id;
   } catch (e) {
+    clearInterval(timer);
     delete $('#modal').dataset.lock;
     modal(`<h2>분석하지 못했습니다</h2><p>${esc(e.message)}</p><div class="foot">${/키/.test(e.message) ? '<button class="btn primary" data-act="settings">설정 열기</button>' : ''}<button class="btn" data-act="close">닫기</button></div>`);
   }
