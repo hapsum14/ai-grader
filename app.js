@@ -269,7 +269,7 @@ function vHome() {
   <div class="row between" style="margin:22px 2px 10px"><h2 style="font-size:18px">내 과목</h2>
     <div class="row"><button class="btn sm" data-act="backup">${ICON.down}백업 저장</button><button class="btn sm" data-act="restore">${ICON.up}백업 불러오기</button></div></div>
   ${cards ? `<div class="grid2">${cards}</div>` : '<div class="card empty">아직 과목이 없습니다. 평가계획서를 올려 시작하세요.</div>'}
-  <p class="small faint" style="margin-top:24px">모든 자료는 이 브라우저(이 컴퓨터)에만 저장됩니다. AI 를 쓸 때만 가림 처리한 답안 그림과 채점 기준이 Google Gemini 로 전송됩니다.</p>`;
+  <p class="small faint" style="margin-top:24px">판 ${esc(window.APP_VERSION || '')} · 모든 자료는 이 브라우저(이 컴퓨터)에만 저장됩니다. AI 를 쓸 때만 가림 처리한 답안 그림과 채점 기준이 Google Gemini 로 전송됩니다.</p>`;
 }
 
 async function startPlan(src) {
