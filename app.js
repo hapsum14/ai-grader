@@ -66,7 +66,10 @@ let S = { courses: [] };
 let saveTimer = null;
 function save(now) {
   clearTimeout(saveTimer);
-  const run = () => DB.put('kv', 'state', JSON.parse(JSON.stringify(S, (k, v) => (k[0] === '_' ? undefined : v)))).catch(e => toast('저장 실패: ' + e.message));
+  const el = document.getElementById('saved'); if (el) el.textContent = '저장 중…';
+  const run = () => DB.put('kv', 'state', JSON.parse(JSON.stringify(S, (k, v) => (k[0] === '_' ? undefined : v))))
+    .then(() => { const e2 = document.getElementById('saved'); if (e2) { const d = new Date(); e2.textContent = `저장됨 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; } })
+    .catch(e => toast('저장 실패: ' + e.message, 5000));
   if (now) return run();
   saveTimer = setTimeout(run, 300);
 }
@@ -199,16 +202,122 @@ function lint(t) {
   return w;
 }
 
-/* ================= 화면 틀 ================= */
+/* ================= 화면 틀: 왼쪽 메뉴 · 위쪽 띠 ================= */
 const view = $('#view');
 let after = null;
-function crumb(parts) {
-  $('#crumb').innerHTML = parts.map(p => p[1] ? `<a href="${p[1]}">${esc(p[0])}</a>` : esc(p[0])).join(' &rsaquo; ');
+// 거르기 상태: 검색어(Q)와 학생 상태(F.status). 반이 바뀌면 상태 거르기는 풀린다
+const F = { q: '', status: '', kid: '', sort: 'no' };
+const STATUS = [
+  ['', '전체', 'list'], ['채점 전', '채점 전', 'todo'], ['AI 채점', 'AI 채점(확인 필요)', 'bot'],
+  ['채점 완료', '채점 완료', 'check'], ['미제출', '미제출', 'minus'], ['미응시', '미응시', 'x'],
+];
+const IC = {
+  logo: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7"/>',
+  task: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 4.5a3 3 0 0 1 0 6M21 20a5.5 5.5 0 0 0-4-5.3"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
+  todo: '<circle cx="12" cy="12" r="9"/>',
+  bot: '<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M9 13h.01M15 13h.01M9 17h6"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  x: '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>',
+  tool: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>',
+  up: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+  down: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17h.01"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  chev: '<path d="M9 6l6 6-6 6"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+  play: '<path d="M7 4l13 8-13 8z"/>',
+};
+const ic = (k, cls = 'ic') => `<svg class="${cls}" viewBox="0 0 24 24">${IC[k] || ''}</svg>`;
+
+function sideOpen() { try { return JSON.parse(localStorage.getItem('aigrader-side') || '{"course":true,"status":true,"tools":false}'); } catch (e) { return { course: true, status: true, tools: false }; } }
+function setSideOpen(k, v) { const o = sideOpen(); o[k] = v; try { localStorage.setItem('aigrader-side', JSON.stringify(o)); } catch (e) {} }
+function routeParts() { return location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent); }
+// 지금 화면이 가리키는 과목·수행평가·반
+function curCtx() {
+  const p = routeParts();
+  if (p[0] === 'k' || p[0] === 'g') return Object.assign({ kind: p[0] }, findClass(p[1]));
+  if (p[0] === 't') return Object.assign({ kind: 't' }, findTask(p[1]));
+  if (p[0] === 'c' || p[0] === 's') return { kind: p[0], course: findCourse(p[1]) };
+  return { kind: 'home' };
 }
-function route() {
-  const h = location.hash.replace(/^#\/?/, '');
-  const p = h.split('/').map(decodeURIComponent);
+function classCounts(cls) {
+  const n = { '': cls.size, '채점 전': 0, 'AI 채점': 0, '채점 완료': 0, '미제출': 0, '미응시': 0 };
+  for (let i = 1; i <= cls.size; i++) n[statusOf(cls, i)]++;
+  return n;
+}
+function doneCount(cls) { const n = classCounts(cls); return n['채점 완료'] + n['미제출'] + n['미응시']; }
+function matchQ(...texts) { const q = F.q.trim().toLowerCase(); if (!q) return true; return texts.some(t => String(t || '').toLowerCase().includes(q)); }
+
+function renderSide() {
+  const ctx = curCtx(), open = sideOpen();
+  const nStu = sum(S.courses.flatMap(c => c.tasks.flatMap(t => t.classes.map(k => k.size))));
+  const tree = S.courses.map(c => {
+    const tasks = c.tasks.map(t => {
+      const cls = t.classes.map(k => `<a class="subj l2 ${ctx.cls === k ? 'on' : ''}" href="#/k/${k.id}"><span class="nm">${esc(k.name)}</span><b>${doneCount(k)}/${k.size}</b></a>`).join('');
+      const tOn = ctx.task === t && !ctx.cls;
+      return `<a class="subj l1 ${tOn ? 'on' : ''}" href="#/t/${t.id}" title="채점 기준">${ic('task')}<span class="nm">${esc(t.name)}</span><b>${t.classes.length ? t.classes.length + '반' : ''}</b></a>${cls}`;
+    }).join('');
+    const cOn = ctx.kind === 'c' && ctx.course === c;
+    return `<a class="subj ${cOn ? 'on' : ''}" href="#/c/${c.id}">${ic('book')}<span class="nm">${esc(c.name)}</span><b>${c.tasks.length}</b></a>${tasks}`;
+  }).join('');
+  const cls = ctx.cls;
+  const cnt = cls ? classCounts(cls) : null;
+  const status = cls
+    ? STATUS.map(([v, label, k]) => `<button class="subj ${F.status === v ? 'on' : ''}" data-act="fstatus" data-v="${esc(v)}">${ic(k)}<span class="nm">${label}</span><b>${cnt[v]}</b></button>`).join('')
+    : `<div class="sidecap">반을 고르면 학생을 상태별로 거를 수 있습니다.</div>`;
+  const curCls = cls ? `${cls.name}` : '';
+  const stLabel = F.status && cls ? (STATUS.find(s => s[0] === F.status) || [])[0] : '';
+  $('#side').innerHTML = `
+    <a class="logo" href="#/"><i>${ic('logo')}</i><div><b>AI 서논술형 채점</b><span>과목 ${S.courses.length} · 학생 ${nStu}명</span></div></a>
+    <label class="sbox">${ic('search')}<input id="q" type="search" placeholder="찾기 (과목·반·번호·세특)" value="${esc(F.q)}" autocomplete="off"><kbd>/</kbd></label>
+    <div class="sg ${open.course ? 'open' : ''}" data-k="course">
+      <button class="sgh" data-act="sg" data-k="course"><span class="bx">${ic('book')}</span><span class="nm">과목·반</span><em>${esc(ctx.course ? ctx.course.name : '')}</em>${ic('chev', 'ic chev')}</button>
+      <div class="sgb">${tree || '<div class="sidecap">아직 과목이 없습니다.</div>'}</div></div>
+    <div class="sg ${open.status ? 'open' : ''}" data-k="status">
+      <button class="sgh" data-act="sg" data-k="status"><span class="bx">${ic('users')}</span><span class="nm">채점 현황${curCls ? ' · ' + esc(curCls) : ''}</span><em>${esc(stLabel)}</em>${ic('chev', 'ic chev')}</button>
+      <div class="sgb">${status}</div></div>
+    <div class="sg ${open.tools ? 'open' : ''}" data-k="tools">
+      <button class="sgh" data-act="sg" data-k="tools"><span class="bx">${ic('tool')}</span><span class="nm">도구</span>${ic('chev', 'ic chev')}</button>
+      <div class="sgb">
+        <button class="subj" data-act="pickplan">${ic('up')}<span class="nm">평가계획서 올리기</span></button>
+        <button class="subj" data-act="pasteplan">${ic('pen')}<span class="nm">계획서 글 붙여넣기</span></button>
+        <button class="subj" data-act="newcourse">${ic('book')}<span class="nm">빈 과목 만들기</span></button>
+        <button class="subj" data-act="backup">${ic('down')}<span class="nm">백업 저장</span></button>
+        <button class="subj" data-act="restore">${ic('up')}<span class="nm">백업 불러오기</span></button>
+        <button class="subj" data-act="settings">${ic('gear')}<span class="nm">설정</span></button>
+        <button class="subj" data-act="help">${ic('help')}<span class="nm">도움말</span></button>
+      </div></div>
+    <div class="foot">판 ${esc(window.APP_VERSION || '')} · 자료는 이 브라우저에만 저장</div>
+    <nav id="mnav">
+      <button data-act="sheet" data-k="course">${ic('book')}과목·반</button>
+      <button data-act="sheet" data-k="status">${ic('users')}현황</button>
+      <button data-act="sheet" data-k="tools">${ic('tool')}도구</button>
+      <button data-act="msearch">${ic('search')}찾기</button>
+    </nav>`;
+  const q = $('#q');
+  let tq = null;
+  q.addEventListener('input', () => { clearTimeout(tq); tq = setTimeout(() => { F.q = q.value; route({ keepSide: true }); }, 200); });
+  q.addEventListener('keydown', e => { if (e.key === 'Escape') { q.value = ''; F.q = ''; route({ keepSide: true }); q.blur(); } });
+}
+function scope(parts) {
+  $('#scope').innerHTML = parts.length
+    ? parts.map((p, i) => i === parts.length - 1 ? `${esc(p[0])}` : `<a href="${p[1] || '#/'}">${esc(p[0])}</a> <span>›</span> `).join('')
+    : `처음 화면 <span>· 과목 ${S.courses.length}개</span>`;
+}
+const crumb = scope; // 예전 이름
+
+function route(opt = {}) {
+  const p = routeParts();
   document.body.classList.toggle('grading', p[0] === 'g');
+  // 반이 바뀌면 상태 거르기를 푼다
+  const kid = (p[0] === 'k' || p[0] === 'g') ? p[1] : '';
+  if (kid && kid !== F.kid) { F.status = ''; F.kid = kid; }
   after = null;
   let html;
   try {
@@ -221,12 +330,19 @@ function route() {
     else html = vHome();
   } catch (e) { console.error(e); html = `<div class="card empty">화면을 그리지 못했습니다: ${esc(e.message)}<br><a href="#/">처음으로</a></div>`; }
   view.innerHTML = html;
-  const k = App.settings();
-  $('#keydot').classList.toggle('on', !!k.apiKey);
+  if (opt.keepSide) {
+    // 검색 칸에 쓰는 중이면 메뉴를 다시 그리지 않고 숫자만 맞춘다
+    const q = $('#q'); const had = document.activeElement === q; const pos = q && q.selectionStart;
+    renderSide(); const q2 = $('#q'); if (had && q2) { q2.focus(); try { q2.setSelectionRange(pos, pos); } catch (e) {} }
+  } else renderSide();
+  $('#keydot').classList.toggle('on', !!App.settings().apiKey);
+  closeSheet();
   if (after) after();
 }
-function rerender() { const y = window.scrollY; const side = $('.gside'); const sy = side && side.scrollTop; route(); window.scrollTo(0, y); const s2 = $('.gside'); if (s2 && sy != null) s2.scrollTop = sy; }
-window.addEventListener('hashchange', route);
+function rerender() { const y = window.scrollY; const side = $('.gside'); const sy = side && side.scrollTop; route({ keepSide: true }); window.scrollTo(0, y); const s2 = $('.gside'); if (s2 && sy != null) s2.scrollTop = sy; }
+window.addEventListener('hashchange', () => { route(); if (!location.hash.startsWith('#/g/')) window.scrollTo(0, 0); });
+
+function closeSheet() { $$('.sg.sheet').forEach(s => s.classList.remove('sheet')); $$('#mnav button').forEach(b => b.classList.remove('open')); $('#mback').classList.remove('on'); }
 
 /* ================= 모달 ================= */
 function modal(html, wide) {
@@ -238,38 +354,52 @@ function closeModal() { $('#modal').classList.add('hide'); $('#mbox').innerHTML 
 $('#modal').addEventListener('mousedown', e => { if (e.target.id === 'modal' && !$('#modal').dataset.lock) closeModal(); });
 
 /* ================= 처음 화면 ================= */
+function lastOpen() { try { return JSON.parse(localStorage.getItem('aigrader-last') || 'null'); } catch (e) { return null; } }
+function allClasses() { return S.courses.flatMap(c => c.tasks.flatMap(t => t.classes.map(k => ({ course: c, task: t, cls: k })))); }
 function vHome() {
-  crumb([]);
+  scope([]);
   const key = App.settings().apiKey;
-  const cards = S.courses.map(c => {
-    const nCls = sum(c.tasks.map(t => t.classes.length));
-    let done = 0, all = 0;
-    c.tasks.forEach(t => t.classes.forEach(k => { for (let i = 1; i <= k.size; i++) { all++; const st = statusOf(k, i); if (st === '채점 완료' || st === '미응시' || st === '미제출') done++; } }));
-    return `<div class="card tcard" data-go="#/c/${c.id}">
-      <div class="row between"><h3>${esc(c.name)}</h3><span class="pill">${esc([c.year, c.grade && c.grade + '학년', c.semester && c.semester + '학기'].filter(Boolean).join(' '))}</span></div>
-      <div class="sub">수행평가 ${c.tasks.length}개 · 반 ${nCls}개${all ? ` · 처리 ${done}/${all}명` : ''}</div>
-      <div class="small faint" style="margin-top:6px">${esc(c.planName || '직접 만듦')}</div></div>`;
+  let all = 0, done = 0, check = 0, firstCheck = null;
+  allClasses().forEach(({ cls }) => {
+    const n = classCounts(cls); all += cls.size; done += n['채점 완료'] + n['미제출'] + n['미응시']; check += n['AI 채점'];
+    if (!firstCheck && n['AI 채점']) for (let i = 1; i <= cls.size; i++) if (statusOf(cls, i) === 'AI 채점') { firstCheck = `#/g/${cls.id}/${i}`; break; }
+  });
+  const pct = all ? Math.round(done / all * 100) : 0;
+  const last = lastOpen(); const lc = last && findClass(last.kid);
+  const lastCard = lc && lc.cls
+    ? `<a class="scard c" href="#/g/${lc.cls.id}/${last.no}"><span class="l">이어 하기</span><span class="v sm">${esc(lc.cls.name)} ${last.no}번</span><span class="s">${esc(lc.course.name)} · ${esc(lc.task.name)}</span></a>`
+    : `<button class="scard c" data-act="help" data-sec="start"><span class="l">처음이신가요?</span><span class="v sm">사용 순서 보기</span><span class="s">계획서 → 반 추가 → 채점 → 세특</span></button>`;
+  const rows = S.courses.map(c => {
+    const tasks = c.tasks.filter(t => matchQ(c.name, t.name, ...t.classes.map(k => k.name)));
+    if (!tasks.length && !matchQ(c.name)) return '';
+    const meta = [c.year && c.year + '학년도', c.grade && c.grade + '학년', c.semester && c.semester + '학기'].filter(Boolean).join(' ');
+    return `<div class="group"><b>${esc(c.name)}</b><span>${esc(meta)}</span><span class="sp"></span><a class="btn sm ghost" href="#/c/${c.id}">과목 열기 ›</a></div>` +
+      (tasks.length ? tasks.map(t => {
+        let a = 0, d = 0; t.classes.forEach(k => { a += k.size; d += doneCount(k); });
+        const pill = !t.classes.length ? '<span class="pill">반 없음</span>' : d >= a ? '<span class="pill ok">채점 끝</span>' : d ? '<span class="pill ai">채점 중</span>' : '<span class="pill">시작 전</span>';
+        const go = t.classes.length === 1 ? `#/k/${t.classes[0].id}` : `#/c/${c.id}`;
+        return `<a class="item" href="${go}"><div><div class="t">${esc(t.name)}</div><div class="m">${t.maxScore}점 · ${esc(t.method || '')} · 채점 기준 ${t.criteria.length}개</div></div>
+          <span class="c hide-sm">${t.classes.map(k => esc(k.name)).join(', ') || '-'}</span><span class="c hide-sm r">${a ? `${d}/${a}명` : ''}</span><span class="r">${pill}</span></a>`;
+      }).join('') : `<div class="item" style="cursor:default"><span class="m">수행평가가 없습니다.</span></div>`);
   }).join('');
-  after = () => dropzone($('#plandrop'), $('#planfile'), fs => startPlan({ file: fs[0] }));
+  after = () => { const z = $('#plandrop'); if (z) dropzone(z, $('#planfile'), fs => startPlan({ file: fs[0] })); };
   return `
-  ${key ? '' : `<div class="card note blue"><b>처음 쓰시나요?</b> <a href="${KEY_URL}" target="_blank" rel="noopener">Google AI Studio 에서 무료 API 키를 발급</a>받아 오른쪽 위 <b>설정</b>에 넣으면 AI 분석·채점·세특 작성이 됩니다. 키 없이도 수동 채점은 할 수 있습니다.
-    <div class="row" style="margin-top:8px"><button class="btn sm primary" data-act="settings">설정 열기</button><button class="btn sm" data-act="help" data-sec="key">키 발급 방법</button><button class="btn sm" data-act="help" data-sec="start">사용 순서</button></div></div>`}
-  <div class="card">
-    <div class="sec-h">${ICON.doc}평가계획서로 시작하기</div>
-    <div class="drop" id="plandrop">
-      <b>평가계획서 파일을 끌어 놓거나 눌러서 고르세요</b><br>
-      <span class="small">hwp · hwpx · pdf · txt — 수행평가 영역별 채점 기준을 AI 가 뽑아 채점 계획을 만듭니다</span>
-    </div>
-    <input type="file" id="planfile" accept=".hwp,.hwpx,.pdf,.txt" class="hide">
-    <div class="row" style="margin-top:12px">
-      <button class="btn" data-act="pasteplan">${ICON.pen}계획서 글 붙여넣기</button>
-      <button class="btn" data-act="newcourse">빈 과목 직접 만들기</button>
-    </div>
+  <div class="cards">
+    <div class="txt"><h2>수행평가를 채점해 보세요</h2>
+      <p>평가계획서를 올리면 채점 기준을 정리하고, 답안을 AI 와 함께 채점해 세특 초안까지 씁니다.</p>
+      <div class="row"><button class="btn cta" data-act="pickplan">${ic('up')}평가계획서 올리기</button><button class="btn sm ghost" data-act="pasteplan">글로 붙여넣기</button></div></div>
+    <div class="scard a"><span class="l">처리한 학생</span><span class="v">${done}<small> / ${all}명</small></span><div class="bar"><i style="width:${pct}%"></i></div><span class="s">채점 완료·미제출·미응시 ${pct}%</span></div>
+    <${firstCheck ? `a href="${firstCheck}"` : 'div'} class="scard b"><span class="l">확인할 답안</span><span class="v">${check}</span><span class="s">${check ? 'AI 가 채점함 · 눌러서 확인' : 'AI 채점 후 선생님 확인 대기'}</span></${firstCheck ? 'a' : 'div'}>
+    ${lastCard}
   </div>
-  <div class="row between" style="margin:22px 2px 10px"><h2 style="font-size:18px">내 과목</h2>
-    <div class="row"><button class="btn sm" data-act="backup">${ICON.down}백업 저장</button><button class="btn sm" data-act="restore">${ICON.up}백업 불러오기</button></div></div>
-  ${cards ? `<div class="grid2">${cards}</div>` : '<div class="card empty">아직 과목이 없습니다. 평가계획서를 올려 시작하세요.</div>'}
-  <p class="small faint" style="margin-top:24px">판 ${esc(window.APP_VERSION || '')} · 모든 자료는 이 브라우저(이 컴퓨터)에만 저장됩니다. AI 를 쓸 때만 가림 처리한 답안 그림과 채점 기준이 Google Gemini 로 전송됩니다.</p>`;
+  ${key ? '' : `<div class="note blue" style="margin-bottom:16px"><b>처음 쓰시나요?</b> <a href="${KEY_URL}" target="_blank" rel="noopener">Google AI Studio 에서 무료 API 키를 발급</a>받아 <b>설정</b>에 넣으면 AI 분석·채점·세특 작성이 됩니다. 키 없이도 수동 채점은 할 수 있습니다.
+    <div class="row" style="margin-top:8px"><button class="btn sm primary" data-act="settings">설정 열기</button><button class="btn sm" data-act="help" data-sec="key">키 발급 방법</button></div></div>`}
+  <input type="file" id="planfile" accept=".hwp,.hwpx,.pdf,.txt" class="hide">
+  ${S.courses.length ? `<div class="stat"><b>과목 ${S.courses.length}개</b> · 수행평가 ${sum(S.courses.map(c => c.tasks.length))}개 · 반 ${allClasses().length}개${F.q ? ` · '${esc(F.q)}' 찾는 중` : ''}</div>
+    <div class="list">${rows || '<div class="empty">찾는 과목이 없습니다.</div>'}</div>` : ''}
+  <div class="drop" id="plandrop"><b>평가계획서 파일을 여기에 끌어 놓거나 눌러서 고르세요</b><br>
+    <span class="small">hwp · hwpx · pdf · txt — 수행평가 영역별 채점 기준을 정리해 채점 계획을 만듭니다</span></div>
+  <p class="small faint" style="margin-top:18px">모든 자료는 이 브라우저(이 컴퓨터)에만 저장됩니다. AI 를 쓸 때만 가림 처리한 답안 그림과 채점 기준이 Google Gemini 로 전송됩니다.</p>`;
 }
 
 async function startPlan(src) {
@@ -449,6 +579,10 @@ function addClassModal(tid) {
   };
 }
 async function addPages(cls, files, onMsg, reuseIds) {
+  BUSY++;
+  try { return await addPagesInner(cls, files, onMsg, reuseIds); } finally { BUSY--; }
+}
+async function addPagesInner(cls, files, onMsg, reuseIds) {
   let k = 0;
   for (const f of files) {
     await Parse.filePages(f, async pg => {
@@ -575,39 +709,73 @@ function maskModal(kid) {
 }
 
 /* ================= 반(학생 목록) 화면 ================= */
+// 반 화면에서 보이는 학생 번호(상태 거르기 + 찾기 + 정렬). 채점 화면의 ← → 도 이 순서를 따른다
+function listNos(task, cls) {
+  let nos = Array.from({ length: cls.size }, (_, i) => i + 1);
+  if (F.status) nos = nos.filter(n => statusOf(cls, n) === F.status);
+  if (F.q.trim()) {
+    const q = F.q.trim();
+    nos = nos.filter(n => {
+      const s = cls.students[n] || {};
+      return String(n) === q.replace(/번$/, '') || matchQ(s.seteuk, s.feedback, s.memo, s.ai && s.ai.transcript, statusOf(cls, n));
+    });
+  }
+  if (F.sort === 'score') nos.sort((a, b) => (scoreOf(task, cls.students[b]) ?? -1) - (scoreOf(task, cls.students[a]) ?? -1) || a - b);
+  if (F.sort === 'ai') nos.sort((a, b) => (aiScoreOf(task, cls.students[b]) ?? -1) - (aiScoreOf(task, cls.students[a]) ?? -1) || a - b);
+  return nos;
+}
 function vClass(kid) {
   const { course, task, cls } = findClass(kid); if (!cls) return '<div class="card empty">반을 찾을 수 없습니다.</div>';
-  crumb([[course.name, '#/c/' + course.id], [task.name], [cls.name]]);
-  let done = 0, ai = 0; const scores = [];
-  const rows = Array.from({ length: cls.size }, (_, i) => i + 1).map(no => {
-    const s = cls.students[no]; const st = statusOf(cls, no); const sub = subOf(cls, no);
-    if (st === '채점 완료') done++; if (s && s.ai) ai++;
-    const sc = scoreOf(task, s); if (sc != null && st === '채점 완료') scores.push(sc);
-    const aisc = aiScoreOf(task, s);
-    const b = s && s.seteuk ? App.bytes(s.seteuk) : 0;
-    return `<tr class="click" data-go="#/g/${cls.id}/${no}">
-      <td><b>${no}</b></td><td>${pillOf(st)}</td><td class="faint">${sub ? sub.pages.length + '쪽' : '-'}</td>
-      <td class="r">${aisc == null ? '<span class="faint">-</span>' : aisc}</td>
-      <td class="r"><b>${sc == null ? '<span class="faint">-</span>' : sc}</b></td>
-      <td class="r">${b ? `<span class="${b > App.settings().byteMax ? 'pill bad' : 'pill ok'}">${b}B</span>` : '<span class="faint">-</span>'}</td>
-      <td class="small muted" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s && s.seteuk || '')}</td></tr>`;
-  }).join('');
+  scope([[course.name, '#/c/' + course.id], [task.name, '#/t/' + task.id], [cls.name]]);
+  const n = classCounts(cls);
+  const done = n['채점 완료'] + n['미제출'] + n['미응시'];
+  const scores = []; let nSet = 0;
+  for (let i = 1; i <= cls.size; i++) { const s = cls.students[i]; if (s && s.seteuk) nSet++; const sc = scoreOf(task, s); if (sc != null && statusOf(cls, i) === '채점 완료') scores.push(sc); }
   const avg = scores.length ? (sum(scores) / scores.length).toFixed(1) : '-';
+  const nos = listNos(task, cls);
+  G.navIds = nos.slice(); G.navKid = kid;
+  const max = App.settings().byteMax;
+  const rows = nos.map(no => {
+    const s = cls.students[no]; const st = statusOf(cls, no); const sub = subOf(cls, no);
+    const sc = scoreOf(task, s), aisc = aiScoreOf(task, s);
+    const b = s && s.seteuk ? App.bytes(s.seteuk) : 0;
+    return `<a class="item stu" href="#/g/${cls.id}/${no}">
+      <span class="no">${no}번</span><span>${pillOf(st)}</span>
+      <span class="c r hide-sm">${aisc == null ? '-' : aisc}</span>
+      <span class="sc">${sc == null ? '<span class="faint">-</span>' : sc}</span>
+      <span class="r hide-sm">${b ? `<span class="pill ${b > max ? 'bad' : 'ok'}">${b}B</span>` : `<span class="faint small">${sub ? '' : '답안 없음'}</span>`}</span>
+      <span class="pv">${esc(s && s.seteuk || '')}</span>
+      <span>${s && s.seteuk ? `<button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="세특 복사">${ic('copy')}</button>` : ''}</span></a>`;
+  }).join('');
+  const nextTodo = firstTodo(cls);
   return `
-  <div class="row between" style="margin-bottom:14px"><div><div class="title">${esc(cls.name)}</div>
-    <div class="sub">${esc(task.name)} · ${task.maxScore}점 만점 · 채점 완료 ${done}/${cls.size}명 · AI 채점 ${ai}명 · 평균 ${avg}점</div></div>
-    <div class="row"><a class="btn" href="#/k/${cls.id}/pages">${ICON.img}답안 나누기·이름 가리기</a>
-      <button class="btn" data-act="xlsx" data-id="${cls.id}">${ICON.down}엑셀로 내보내기</button></div></div>
-  <div class="card">
-    <div class="row">
-      <button class="btn primary" data-act="batchgrade" data-id="${cls.id}">${ICON.bot}AI 채점 한꺼번에</button>
-      <button class="btn soft" data-act="batchseteuk" data-id="${cls.id}">${ICON.wand}세특 한꺼번에 만들기</button>
-      <a class="btn" href="#/g/${cls.id}/${firstTodo(cls) || 1}">${ICON.pen}채점 화면 열기</a>
-      <span class="small muted">AI 채점은 채점하지 않은 학생만 합니다. 세특은 점수가 정해졌고 세특이 빈 학생만 만듭니다.</span>
-    </div>
-    ${!cls.masks.length ? `<p class="note" style="margin-top:12px">이름 칸 가리기가 아직 없습니다. AI 로 보내기 전에 <a href="#/k/${cls.id}/pages">답안 나누기·이름 가리기</a>에서 설정하세요.</p>` : ''}
+  <div class="cards">
+    <div class="txt"><h2>${esc(cls.name)}</h2>
+      <p>${esc(task.name)} · ${task.maxScore}점 만점 · 평균 ${avg}점${cls.masks.length ? '' : ' · <b style="color:var(--bad)">이름 칸 가리기 안 함</b>'}</p>
+      <div class="row">${nextTodo ? `<a class="btn cta" href="#/g/${cls.id}/${nextTodo}">${ic('play')}${statusOf(cls, nextTodo) === 'AI 채점' ? '확인' : '채점'} 이어 하기 (${nextTodo}번)</a>` : `<a class="btn cta" href="#/g/${cls.id}/1">${ic('pen')}채점 화면 열기</a>`}</div></div>
+    <button class="scard a" data-act="fstatus" data-v="채점 완료"><span class="l">처리한 학생</span><span class="v">${done}<small> / ${cls.size}명</small></span><div class="bar"><i style="width:${Math.round(done / cls.size * 100)}%"></i></div><span class="s">채점 완료 ${n['채점 완료']} · 미제출 ${n['미제출']} · 미응시 ${n['미응시']}</span></button>
+    <button class="scard b" data-act="fstatus" data-v="AI 채점"><span class="l">확인할 답안</span><span class="v">${n['AI 채점']}</span><span class="s">AI 채점 후 확인 대기 · 채점 전 ${n['채점 전']}명</span></button>
+    <div class="scard c"><span class="l">세특 초안</span><span class="v">${nSet}<small> / ${cls.size}명</small></span><span class="s">목표 ${App.settings().byteMin}~${max}B</span></div>
   </div>
-  <div class="card scroll-x" style="padding:6px 10px"><table class="tb"><thead><tr><th>번호</th><th>상태</th><th>쪽</th><th class="r">AI 점수</th><th class="r">점수</th><th class="r">세특</th><th>세특 초안</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  <div class="row" style="margin-bottom:14px">
+    <button class="btn primary" data-act="batchgrade" data-id="${cls.id}">${ic('bot')}AI 채점 한꺼번에</button>
+    <button class="btn soft" data-act="batchseteuk" data-id="${cls.id}">${ICON.wand}세특 한꺼번에 만들기</button>
+    <a class="btn" href="#/k/${cls.id}/pages">${ICON.img}답안 나누기·이름 가리기</a>
+    <button class="btn" data-act="copyall" data-id="${cls.id}">${ic('copy')}세특 모두 복사</button>
+    <button class="btn" data-act="xlsx" data-id="${cls.id}">${ic('down')}엑셀</button>
+  </div>
+  ${!cls.masks.length ? `<p class="note" style="margin-bottom:14px">AI 로 보내기 전에 <a href="#/k/${cls.id}/pages">이름 칸 가리기</a>를 해 두세요.</p>` : ''}
+  <div class="filters"><span class="lab">상태</span>
+    <select data-act-change="fstatus">${STATUS.map(([v, l]) => `<option value="${esc(v)}" ${F.status === v ? 'selected' : ''}>${l} (${n[v]})</option>`).join('')}</select>
+    <span class="lab">순서</span>
+    <select data-act-change="fsort"><option value="no" ${F.sort === 'no' ? 'selected' : ''}>번호순</option><option value="score" ${F.sort === 'score' ? 'selected' : ''}>점수 높은 순</option><option value="ai" ${F.sort === 'ai' ? 'selected' : ''}>AI 점수 높은 순</option></select>
+    ${F.status || F.q ? `<button class="btn sm ghost" data-act="fclear">거르기 풀기</button>` : ''}
+  </div>
+  <div class="stat"><b>${nos.length}명</b>${nos.length !== cls.size ? ` / ${cls.size}명` : ''}${F.q ? ` · '${esc(F.q)}' 찾는 중` : ''}</div>
+  <div class="list">
+    <div class="lhead stu"><span>번호</span><span>상태</span><span class="r hide-sm">AI</span><span class="r">점수</span><span class="r hide-sm">세특</span><span>세특 초안</span><span></span></div>
+    ${rows || '<div class="empty">조건에 맞는 학생이 없습니다.</div>'}
+  </div>`;
 }
 function firstTodo(cls) {
   for (let i = 1; i <= cls.size; i++) { const st = statusOf(cls, i); if (st === '채점 전' || st === 'AI 채점') return i; }
@@ -615,13 +783,24 @@ function firstTodo(cls) {
 }
 
 /* ================= 채점 화면 ================= */
-const G = { page: 0, zoom: 1, rot: 0, tab: 'img', showMask: false, aiTab: 'ana' };
+const G = { page: 0, zoom: 1, rot: 0, tab: 'img', showMask: false, aiTab: 'ana', navIds: null, navKid: '' };
+// 이전/다음 학생: 반 화면에서 보던 목록(상태 거르기·정렬) 순서. 지금 학생이 목록에서 빠졌어도 그 자리에서 이어 간다
+function navStep(task, cls, no, d) {
+  const ids = G.navKid === cls.id && G.navIds ? G.navIds : listNos(task, cls);
+  const i = ids.indexOf(no);
+  if (i >= 0) return ids[i + d] || null;
+  if (d > 0) return ids.find(x => x > no) || null;
+  return [...ids].reverse().find(x => x < no) || null;
+}
 let gctx = null;
 function vGrade(kid, no) {
   const { course, task, cls } = findClass(kid); if (!cls) return '<div class="card empty">반을 찾을 수 없습니다.</div>';
   task._subject = course.name;
-  crumb([[course.name, '#/c/' + course.id], [task.name], [cls.name, '#/k/' + cls.id], [no + '번']]);
+  const stF = F.status ? ` · ${F.status}만` : '';
+  scope([[course.name, '#/c/' + course.id], [task.name, '#/t/' + task.id], [cls.name + stF, '#/k/' + cls.id], [no + '번']]);
   if (!gctx || gctx.kid !== kid || gctx.no !== no) { G.page = 0; G.rot = 0; }
+  try { localStorage.setItem('aigrader-last', JSON.stringify({ kid, no })); } catch (e) {}
+  const prevNo = navStep(task, cls, no, -1), nextNo = navStep(task, cls, no, 1);
   gctx = { kid, no, task, cls };
   const s = stu(cls, no); const sub = subOf(cls, no); const st = statusOf(cls, no);
   const done = Array.from({ length: cls.size }, (_, i) => i + 1).filter(i => { const x = statusOf(cls, i); return x === '채점 완료' || x === '미응시' || x === '미제출'; }).length;
@@ -692,8 +871,8 @@ function vGrade(kid, no) {
     <select class="in" id="stusel">${opts}</select>
     <span class="small muted">${ICON.check.replace('<svg', '<svg width="15" height="15" style="vertical-align:-3px"')} ${cls.size}명 중 ${done}명 처리</span>
     <span class="sp"></span>
-    <button class="btn sm ghost" data-act="stu" data-d="-1" ${no <= 1 ? 'disabled' : ''}>‹ 이전 학생</button>
-    <button class="btn sm ghost" data-act="stu" data-d="1" ${no >= cls.size ? 'disabled' : ''}>다음 학생 ›</button>
+    <button class="btn sm ghost" data-act="stu" data-d="-1" ${prevNo ? '' : 'disabled'}>‹ 이전${prevNo ? ` ${prevNo}번` : ''}</button>
+    <button class="btn sm ghost" data-act="stu" data-d="1" ${nextNo ? '' : 'disabled'}>다음${nextNo ? ` ${nextNo}번` : ''} ›</button>
     <button class="btn primary" data-act="finish">${ICON.check}채점 완료</button>
   </div>
   <div class="gbody">
@@ -732,7 +911,7 @@ function vGrade(kid, no) {
         <textarea class="in" id="tfb" rows="3" placeholder="학생에게 돌려줄 피드백(선택)">${esc(s.feedback)}</textarea>
       </div>
       <div class="gsec">
-        <div class="sec-h">${ICON.grad}세특 초안 (이 수행평가 몫)</div>
+        <div class="sec-h">${ICON.grad}세특 초안 (이 수행평가 몫)<span class="sp"></span>${s.seteuk ? `<button class="btn sm" data-act="copyset" data-kid="${cls.id}" data-no="${no}">${ic('copy')}복사</button>` : ''}</div>
         <label class="f" style="margin-top:0">선생님 관찰 메모(선택 — 수업 중 모습, 발표·태도 등. 세특에 반영됨)</label>
         <textarea class="in" id="tmemo" rows="2" style="min-height:52px" placeholder="예) 모둠 실험에서 변인 통제 방법을 먼저 제안함">${esc(s.memo)}</textarea>
         <div class="row" style="margin:10px 0 6px"><button class="btn soft" data-act="mkseteuk">${ICON.wand}${s.seteuk ? '다시 만들기' : '세특 만들기'}</button>
@@ -785,6 +964,7 @@ async function runSeteuk(task, cls, no, signal) {
 async function runBatch(title, items, fn) {
   const ctl = new AbortController();
   let ok = 0, fail = 0, i = 0;
+  BUSY++;
   const log = [];
   modal(`<h2>${esc(title)}</h2><p id="bmsg">준비 중…</p><div class="prog"><i id="bbar"></i></div>
     <div id="blog" class="small muted" style="max-height:200px;overflow:auto;margin-top:10px"></div>
@@ -806,6 +986,7 @@ async function runBatch(title, items, fn) {
     }
   };
   await Promise.all([worker(), worker()]);
+  BUSY--;
   delete $('#modal').dataset.lock;
   $('#bmsg').textContent = `${ctl.signal.aborted ? '멈춤 — ' : '끝 — '}성공 ${ok}, 실패 ${fail}`;
   $('#bstop').textContent = '닫기'; $('#bstop').onclick = () => { closeModal(); rerender(); };
@@ -977,11 +1158,50 @@ function xlsxAll(cid, cname) {
 /* ================= 동작 ================= */
 const ACT = {
   close: closeModal,
+  sg(el) { const g = el.closest('.sg'); if (g.classList.contains('sheet')) { closeSheet(); return; } const o = !g.classList.contains('open'); g.classList.toggle('open', o); setSideOpen(el.dataset.k, o); },
+  sheet(el) {
+    const g = $(`.sg[data-k="${el.dataset.k}"]`); const was = g.classList.contains('sheet');
+    closeSheet(); if (was) return;
+    g.classList.add('sheet'); el.classList.add('open'); $('#mback').classList.add('on');
+  },
+  sheetclose() { closeSheet(); document.body.classList.remove('msearch'); },
+  msearch() { closeSheet(); const on = document.body.classList.toggle('msearch'); if (on) { $('#mback').classList.add('on'); const q = $('#q'); q && q.focus(); } },
+  sidetoggle() {
+    const b = document.body;
+    if (b.classList.contains('grading')) b.classList.toggle('side-show'); else b.classList.toggle('side-off');
+    try { localStorage.setItem('aigrader-sideoff', b.classList.contains('side-off') ? '1' : ''); } catch (e) {}
+  },
+  fstatus(el) {
+    const v = el.tagName === 'SELECT' ? el.value : el.dataset.v;
+    F.status = el.tagName === 'SELECT' ? v : (F.status === v ? '' : v);
+    const ctx = curCtx();
+    if (ctx.cls && location.hash.startsWith('#/g/')) { G.navIds = listNos(ctx.task, ctx.cls); G.navKid = ctx.cls.id; }
+    rerender();
+  },
+  fsort(el) { F.sort = el.value; rerender(); },
+  fclear() { F.status = ''; F.q = ''; route(); },
+  pickplan() {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.hwp,.hwpx,.pdf,.txt';
+    inp.onchange = () => inp.files[0] && startPlan({ file: inp.files[0] });
+    inp.click();
+  },
+  async copyset(el, e) {
+    e && e.preventDefault();
+    const { cls } = findClass(el.dataset.kid); const s = cls.students[Number(el.dataset.no)];
+    if (await copyText(s.seteuk)) toast(`${el.dataset.no}번 세특을 복사했습니다(${App.bytes(s.seteuk)}바이트).`);
+  },
+  async copyall(el) {
+    const { cls } = findClass(el.dataset.id);
+    const lines = []; for (let i = 1; i <= cls.size; i++) { const s = cls.students[i]; if (s && s.seteuk) lines.push(i + '\t' + s.seteuk); }
+    if (!lines.length) { toast('복사할 세특이 없습니다.'); return; }
+    if (await copyText(lines.join('\n'))) toast(`세특 ${lines.length}명분을 복사했습니다(번호[탭]세특 — 엑셀에 바로 붙여 넣기).`, 3500);
+  },
   settings: settingsModal,
   help(el) { helpModal(el && el.dataset && el.dataset.sec); },
   theme() {
     const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     r.dataset.theme = dark ? 'light' : 'dark'; try { localStorage.setItem('aigrader-theme', r.dataset.theme); } catch (e) {}
+    themeLabel();
   },
   pasteplan() {
     modal(`<h2>계획서 글 붙여넣기</h2><p class="small muted">한글 파일에서 수행평가 부분(채점 기준 표)을 복사해 붙여 넣으세요.</p>
@@ -1085,7 +1305,7 @@ const ACT = {
   rot() { G.rot = (G.rot + 90) % 360; rerender(); },
   zoom(el) { const d = Number(el.dataset.d); G.zoom = d ? Math.max(0.4, Math.min(3, G.zoom + d)) : 1; rerender(); },
   maskview() { G.showMask = !G.showMask; rerender(); },
-  stu(el) { const n = gctx.no + Number(el.dataset.d); if (n >= 1 && n <= gctx.cls.size) location.hash = `#/g/${gctx.kid}/${n}`; },
+  stu(el) { const n = navStep(gctx.task, gctx.cls, gctx.no, Number(el.dataset.d)); if (n) location.hash = `#/g/${gctx.kid}/${n}`; },
   status(el) {
     const s = stu(gctx.cls, gctx.no); s.status = el.dataset.v;
     if (s.status === '미응시' && subOf(gctx.cls, gctx.no)) toast('이 번호에 답안이 배정돼 있습니다. 답안 나누기에서 번호를 확인하세요.', 4000);
@@ -1122,8 +1342,12 @@ const ACT = {
     const { task, cls, no } = gctx; const s = stu(cls, no);
     if (scoreOf(task, s) == null && !s.status) { toast('점수를 정하거나 미제출·미응시를 고르세요.'); return; }
     s.done = true; save();
-    const next = (() => { for (let i = no + 1; i <= cls.size; i++) { const st = statusOf(cls, i); if (st === '채점 전' || st === 'AI 채점') return i; } return null; })();
-    if (next) location.hash = `#/g/${cls.id}/${next}`; else { rerender(); toast('마지막 학생까지 채점했습니다.'); }
+    // 보던 목록 순서에서 다음으로 채점할 학생(채점 전·AI 채점)으로
+    const todo = x => { const st = statusOf(cls, x); return st === '채점 전' || st === 'AI 채점'; };
+    let next = null, x = no;
+    while ((x = navStep(task, cls, x, 1))) { if (todo(x)) { next = x; break; } }
+    if (!next) next = firstTodo(cls);
+    if (next) location.hash = `#/g/${cls.id}/${next}`; else { rerender(); toast('이 반 채점을 모두 마쳤습니다.'); }
   },
   // ---- 백업
   backup() {
@@ -1173,25 +1397,65 @@ document.addEventListener('click', e => {
   }
   if (go && !e.target.closest('a,button,input,select,textarea')) location.hash = go.dataset.go;
 });
+document.addEventListener('change', e => {
+  const a = e.target.closest('[data-act-change]');
+  if (a && ACT[a.dataset.actChange]) ACT[a.dataset.actChange](a, e);
+});
 document.addEventListener('keydown', e => {
-  if (e.key === '?' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && $('#modal').classList.contains('hide')) { helpModal(); return; }
+  const typingAny = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (e.key === '?' && !typingAny && $('#modal').classList.contains('hide')) { helpModal(); return; }
+  if (e.key === '/' && !typingAny && $('#modal').classList.contains('hide')) { e.preventDefault(); const q = $('#q'); if (q) { if (getComputedStyle($('.sbox')).display === 'none') document.body.classList.add('msearch'); q.focus(); q.select(); } return; }
+  if (e.key === 'Escape' && $('.sg.sheet')) { closeSheet(); return; }
   if (!location.hash.startsWith('#/g/') || !gctx) { if (e.key === 'Escape') closeModal(); return; }
   if (!$('#modal').classList.contains('hide')) { if (e.key === 'Escape') closeModal(); return; }
-  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && document.activeElement.type !== 'checkbox' && document.activeElement.type !== 'radio';
+  const typing = typingAny && document.activeElement.type !== 'checkbox' && document.activeElement.type !== 'radio';
   if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); ACT.finish(); return; }
   if (typing) return;
   if (e.key === 'ArrowLeft') ACT.stu({ dataset: { d: -1 } });
   else if (e.key === 'ArrowRight') ACT.stu({ dataset: { d: 1 } });
+  else if (e.key === 'Escape') location.hash = '#/k/' + gctx.kid;
   else if (/^[1-9]$/.test(e.key)) {
     const box = $(`[data-act="chk"][data-i="${Number(e.key) - 1}"]`);
     if (box) { box.checked = !box.checked; ACT.chk(box); }
   }
 });
 
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (e2) {} ta.remove();
+    if (!ok) toast('복사하지 못했습니다. 글을 직접 선택해 복사해 주세요.'); return ok;
+  }
+}
+function themeLabel() {
+  const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  const l = $('#themelb'); if (l) l.textContent = dark ? '밝게' : '어둡게';
+}
+// 오래 걸리는 일(PDF 그리기·한꺼번에 채점) 중에 창을 닫으려 하면 한 번 묻는다
+let BUSY = 0;
+window.addEventListener('beforeunload', e => { if (BUSY > 0) { e.preventDefault(); e.returnValue = ''; } });
+
+// 처음 화면 어디에든 계획서 파일을 끌어 놓으면 분석
+let dragN = 0;
+document.addEventListener('dragenter', e => { if (curCtx().kind === 'home' && [...(e.dataTransfer.types || [])].includes('Files')) { dragN++; document.body.classList.add('dragging'); } });
+document.addEventListener('dragleave', () => { if (--dragN <= 0) { dragN = 0; document.body.classList.remove('dragging'); } });
+document.addEventListener('dragover', e => { if (curCtx().kind === 'home') e.preventDefault(); });
+document.addEventListener('drop', e => {
+  dragN = 0; document.body.classList.remove('dragging');
+  if (curCtx().kind !== 'home' || e.target.closest('.drop')) return;
+  e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) startPlan({ file: f });
+});
+
 /* ================= 시작 ================= */
 (async () => {
   try { const th = localStorage.getItem('aigrader-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) {}
+  try { if (localStorage.getItem('aigrader-sideoff')) document.body.classList.add('side-off'); } catch (e) {}
+  themeLabel();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', themeLabel);
   try { const st = await DB.get('kv', 'state'); if (st && st.courses) S = st; }
   catch (e) { toast('저장소를 열 수 없습니다(사생활 보호 창?). 이 창을 닫으면 기록이 사라집니다.', 6000); }
+  // 브라우저가 공간이 부족할 때 기록을 지우지 않도록 요청(지원하는 브라우저만)
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
   route();
 })();

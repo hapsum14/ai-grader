@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI 서논술형 채점</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232f5bea' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 11l3 3L22 4'/%3E%3Cpath d='M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236E56CF' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 11l3 3L22 4'/%3E%3Cpath d='M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;700&display=swap">
 <script>
   // 새 판을 올리면 바로 받도록: version.json 은 매번 새로 읽고, 나머지 파일에는 판 번호를 붙인다
   window.APP_READY = (async () => {
@@ -23,17 +23,21 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
-<header id="top">
-  <a class="brand" href="#/">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-    AI 서논술형 채점
-  </a>
-  <div class="crumb" id="crumb"></div>
-  <button class="btn sm ghost" data-act="help" title="도움말 (?)">? 도움말</button>
-  <button class="btn sm ghost" data-act="theme" title="밝게/어둡게">◐</button>
-  <button class="btn sm" data-act="settings"><span id="keydot"></span> 설정</button>
-</header>
-<main id="view"></main>
+<div class="shell">
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <header id="top">
+      <button class="hbtn q" data-act="sidetoggle" title="메뉴 접기/펴기" id="sidet"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <div id="scope"></div>
+      <span id="saved"></span>
+      <button class="hbtn" data-act="help" title="도움말 (?)"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17h.01"/></svg><span class="lb">도움말</span></button>
+      <button class="hbtn" data-act="theme" title="밝게/어둡게"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><span class="lb" id="themelb">어둡게</span></button>
+      <button class="hbtn" data-act="settings"><span id="keydot"></span><span class="lb">설정</span></button>
+    </header>
+    <main id="view"></main>
+  </div>
+</div>
+<div id="mback" data-act="sheetclose"></div>
 <div id="modal" class="hide"><div class="box" id="mbox"></div></div>
 <div id="toast"></div>
 <script>
