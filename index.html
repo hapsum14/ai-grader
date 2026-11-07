@@ -32,6 +32,7 @@
       <span id="saved"></span>
       <button class="hbtn" data-act="help" title="도움말 (?)"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17h.01"/></svg><span class="lb">도움말</span></button>
       <button class="hbtn" data-act="theme" title="밝게/어둡게"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><span class="lb" id="themelb">어둡게</span></button>
+      <button class="hbtn gs hide" data-act="gsync" id="gsync" title="구글 드라이브 저장"></button>
       <button class="hbtn" data-act="settings"><span id="keydot"></span><span class="lb">설정</span></button>
     </header>
     <main id="view"></main>
@@ -45,7 +46,7 @@
 </script>
 <script>
   window.APP_READY.then(async v => {
-    for (const f of ['parse.js', 'ai.js', 'app.js']) {
+    for (const f of ['parse.js', 'ai.js', 'sync.js', 'app.js']) {
       await new Promise(res => { const e = document.createElement('script'); e.src = f + '?v=' + v; e.onload = e.onerror = res; document.body.appendChild(e); });
     }
   });

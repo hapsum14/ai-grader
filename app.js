@@ -8,7 +8,7 @@ const App = (() => {
   function settings() {
     try { return Object.assign({}, DEF, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { return Object.assign({}, DEF); }
   }
-  function saveSettings(s) { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} }
+  function saveSettings(s) { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} if (typeof Sync !== 'undefined') Sync.dirtySettings(); }
   const bytes = t => { let b = 0; for (const ch of String(t || '')) b += ch.codePointAt(0) > 127 ? 3 : 1; return b; };
   return { settings, saveSettings, bytes };
 })();
@@ -60,6 +60,7 @@ const DB = {
   put(store, key, val) { return this.req(store, 'readwrite', s => s.put(val, key)); },
   del(store, key) { return this.req(store, 'readwrite', s => s.delete(key)); },
   delPrefix(store, p) { return this.req(store, 'readwrite', s => s.delete(IDBKeyRange.bound(p, p + '￿'))); },
+  keys(store) { return this.req(store, 'readonly', s => s.getAllKeys()); },
 };
 
 let S = { courses: [] };
@@ -68,15 +69,22 @@ function save(now) {
   clearTimeout(saveTimer);
   const el = document.getElementById('saved'); if (el) el.textContent = '저장 중…';
   const run = () => DB.put('kv', 'state', JSON.parse(JSON.stringify(S, (k, v) => (k[0] === '_' ? undefined : v))))
-    .then(() => { const e2 = document.getElementById('saved'); if (e2) { const d = new Date(); e2.textContent = `저장됨 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; } })
+    .then(() => { if (typeof Sync !== 'undefined') Sync.dirty(); const e2 = document.getElementById('saved'); if (e2) { const d = new Date(); e2.textContent = `저장됨 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; } })
     .catch(e => toast('저장 실패: ' + e.message, 5000));
   if (now) return run();
   saveTimer = setTimeout(() => { saveTimer = null; run(); }, 300);
 }
 const urlCache = new Map();
+// 그림: 이 컴퓨터에 없으면(다른 컴퓨터에서 올린 반) 구글 드라이브에서 받아 온다
+async function getImg(key) {
+  let b = await DB.get('img', key);
+  if (!b && typeof Sync !== 'undefined' && Sync.signedIn()) { try { b = await Sync.fetchImg(key); } catch (e) {} }
+  return b;
+}
+function delImgs(prefix) { if (typeof Sync !== 'undefined') Sync.delPrefix(prefix); return DB.delPrefix('img', prefix); }
 async function imgURL(key) {
   if (urlCache.has(key)) return urlCache.get(key);
-  const b = await DB.get('img', key);
+  const b = await getImg(key);
   if (!b) return '';
   const u = URL.createObjectURL(b); urlCache.set(key, u); return u;
 }
@@ -161,7 +169,7 @@ async function aiImages(cls, sub) {
   const out = [];
   for (let j = 0; j < sub.pages.length; j++) {
     const p = cls.pages[sub.pages[j]];
-    const blob = await DB.get('img', p.id);
+    const blob = await getImg(p.id);
     if (!blob) throw new Error('쪽 그림이 없습니다. 반 화면에서 PDF 를 다시 연결해 주세요.');
     const rects = (cls.masks || []).filter(m => m.page === -1 || m.page === j);
     out.push(await Parse.maskedBase64(blob, rects));
@@ -195,7 +203,7 @@ function seteukInfo(task, s) {
 const Style = {
   KEY: 'aigrader-style',
   get() { try { return JSON.parse(localStorage.getItem(this.KEY) || '[]'); } catch (e) { return []; } },
-  set(a) { try { localStorage.setItem(this.KEY, JSON.stringify(a)); return true; } catch (e) { return false; } },
+  set(a) { try { localStorage.setItem(this.KEY, JSON.stringify(a)); if (typeof Sync !== 'undefined') Sync.dirtySettings(); return true; } catch (e) { return false; } },
   // 세특 한 칸 → 활동 부분 조각들(첫 문장 총평·끝 정리 문장은 뺀다)
   segments(text) {
     const ss = String(text).replace(/\s+/g, ' ').trim().split(/(?<=[.])\s+/).filter(Boolean);
@@ -342,7 +350,7 @@ function renderSide() {
         <button class="subj" data-act="settings">${ic('gear')}<span class="nm">설정</span></button>
         <button class="subj" data-act="help">${ic('help')}<span class="nm">도움말</span></button>
       </div></div>
-    <div class="foot">판 ${esc(window.APP_VERSION || '')} · 자료는 이 브라우저에만 저장</div>
+    <div class="foot">판 ${esc(window.APP_VERSION || '')} · ${typeof Sync !== 'undefined' && Sync.signedIn() ? '이 브라우저 + 내 구글 드라이브에 저장' : '자료는 이 브라우저에만 저장'} · <a href="privacy.html" target="_blank">개인정보 처리방침</a></div>
     <nav id="mnav">
       <button data-act="sheet" data-k="course">${ic('book')}과목·반</button>
       <button data-act="sheet" data-k="status">${ic('users')}현황</button>
@@ -444,6 +452,8 @@ function vHome() {
     <${firstCheck ? `a href="${firstCheck}"` : 'div'} class="scard b"><span class="l">확인할 답안</span><span class="v">${check}</span><span class="s">${check ? 'AI 가 채점함 · 눌러서 확인' : 'AI 채점 후 선생님 확인 대기'}</span></${firstCheck ? 'a' : 'div'}>
     ${lastCard}
   </div>
+  ${typeof Sync !== 'undefined' && Sync.enabled() && !Sync.signedIn() ? `<div class="note" style="margin-bottom:16px"><b>다른 컴퓨터에서도 이어서 하려면</b> 구글 계정으로 로그인하세요. 채점 기록·답안 그림·API 키가 선생님 구글 드라이브의 'AI 서논술형 채점' 폴더에 저장되어, 다른 컴퓨터에서 같은 계정으로 로그인하면 끈 곳부터 이어서 할 수 있습니다.
+    <div class="row" style="margin-top:8px"><button class="btn sm primary" data-act="glogin">${GICON}구글 로그인</button><span class="small muted">로그인하지 않으면 이 컴퓨터에만 저장됩니다.</span></div></div>` : ''}
   ${key ? '' : `<div class="note blue" style="margin-bottom:16px"><b>처음 쓰시나요?</b> <a href="${KEY_URL}" target="_blank" rel="noopener">Google AI Studio 에서 무료 API 키를 발급</a>받아 <b>설정</b>에 넣으면 AI 분석·채점·세특 작성이 됩니다. 키 없이도 수동 채점은 할 수 있습니다.
     <div class="row" style="margin-top:8px"><button class="btn sm primary" data-act="settings">설정 열기</button><button class="btn sm" data-act="help" data-sec="key">키 발급 방법</button></div></div>`}
   <input type="file" id="planfile" accept=".hwp,.hwpx,.pdf,.txt" class="hide">
@@ -644,6 +654,7 @@ async function addPagesInner(cls, files, onMsg, reuseIds) {
       const id = reuseIds ? reuseIds[k] : cls.id + ':' + uid();
       if (!id) { k++; return; }
       await DB.put('img', id, pg.blob); await DB.put('img', id + ':t', pg.thumb);
+      if (typeof Sync !== 'undefined') Sync.queueImg(id);
       urlCache.delete(id); urlCache.delete(id + ':t');
       if (!reuseIds) cls.pages.push({ id, w: pg.w, h: pg.h, skip: false });
       k++;
@@ -688,7 +699,7 @@ function vPages(kid) {
     }));
   };
   const imgMissing = cls.pages.length && !cls._imgChecked;
-  if (imgMissing) { cls._imgChecked = true; DB.get('img', cls.pages[0].id + ':t').then(b => { if (!b) { cls._noimg = true; rerender(); } }); }
+  if (imgMissing) { cls._imgChecked = true; getImg(cls.pages[0].id + ':t').then(b => { if (!b) { cls._noimg = true; rerender(); } }); }
   return `
   <div class="row between" style="margin-bottom:14px"><div><div class="title">${esc(cls.name)} · 답안 나누기</div>
     <div class="sub">${esc(task.name)} · 전체 ${cls.pages.length}쪽 → 답안 ${cls.subs.length}개 / 학생 ${cls.size}명</div></div>
@@ -782,6 +793,7 @@ function listNos(task, cls) {
 function vClass(kid) {
   const { course, task, cls } = findClass(kid); if (!cls) return '<div class="card empty">반을 찾을 수 없습니다.</div>';
   scope([[course.name, '#/c/' + course.id], [task.name, '#/t/' + task.id], [cls.name]]);
+  if (typeof Sync !== 'undefined') Sync.prefetch(cls);
   const n = classCounts(cls);
   const done = n['채점 완료'] + n['미제출'] + n['미응시'];
   const scores = []; let nSet = 0;
@@ -1177,6 +1189,10 @@ function settingsModal() {
       <div><label class="f">세특 최소 바이트</label><input class="in num" id="smin" type="number" value="${s.byteMin}"></div>
       <div><label class="f">세특 최대 바이트</label><input class="in num" id="smax" type="number" value="${s.byteMax}"></div>
     </div>
+    ${typeof Sync !== 'undefined' && Sync.enabled() ? `<label class="f">구글 드라이브 저장</label>
+    <div class="row">${Sync.signedIn() ? `<span class="small"><b>${esc(Sync.status().user)}</b> 드라이브에 저장 중</span><button class="btn sm" data-act="gsyncnow">지금 맞추기</button><button class="btn sm ghost" data-act="glogout">로그아웃</button>`
+      : `<button class="btn sm primary" data-act="glogin">${GICON}구글 로그인</button><span class="small muted">다른 컴퓨터에서도 이어서 하려면</span>`}</div>
+    <p class="small muted" style="margin:6px 0 0">로그인하면 채점 기록·답안 그림·API 키·세특 본보기가 내 드라이브의 'AI 서논술형 채점' 폴더에 저장됩니다. 이 앱이 만든 파일만 볼 수 있는 권한만 받습니다.</p>` : ''}
     <label class="f">세특 문체 본보기</label>
     <div class="row"><button class="btn sm" id="ssty">${ICON.doc}기존 세특 엑셀 불러오기</button><button class="btn sm ghost" id="sstyclr">지우기</button>
       <span class="small muted" id="sstymsg">${Style.get().length ? `본보기 ${Style.get().length}개 저장됨` : '아직 없음'}</span></div>
@@ -1386,14 +1402,14 @@ const ACT = {
   async delcourse(el) {
     const c = findCourse(el.dataset.id);
     if (!confirm(`'${c.name}' 과목과 그 안의 채점 기록·답안 그림을 모두 지울까요? 되돌릴 수 없습니다.`)) return;
-    for (const t of c.tasks) for (const k of t.classes) await DB.delPrefix('img', k.id + ':');
+    for (const t of c.tasks) for (const k of t.classes) await delImgs(k.id + ':');
     S.courses = S.courses.filter(x => x !== c); save(true); location.hash = '#/';
   },
   addtask(el) { const c = findCourse(el.dataset.id); const t = newTask(); c.tasks.push(t); save(); location.hash = '#/t/' + t.id; },
   deltask(el) {
     const { course, task } = findTask(el.dataset.id);
     if (!confirm(`'${task.name}' 수행평가와 그 채점 기록을 지울까요?`)) return;
-    task.classes.forEach(k => DB.delPrefix('img', k.id + ':'));
+    task.classes.forEach(k => delImgs(k.id + ':'));
     course.tasks = course.tasks.filter(t => t !== task); save(); location.hash = '#/c/' + course.id;
   },
   addcrit() { const t = curTask(); t.criteria.push({ text: '', guide: '', points: 0 }); save(); rerender(); },
@@ -1443,7 +1459,7 @@ const ACT = {
   async delclass(el) {
     const { task, cls } = findClass(el.dataset.id);
     if (!confirm(`'${cls.name}' 반의 답안 그림과 채점 기록을 모두 지울까요?`)) return;
-    await DB.delPrefix('img', cls.id + ':');
+    await delImgs(cls.id + ':');
     task.classes = task.classes.filter(k => k !== cls); save(true); location.hash = '#/t/' + task.id;
   },
   async batchgrade(el) {
@@ -1470,6 +1486,17 @@ const ACT = {
       { key: 'seteuk:' + cls.id, kind: 'seteuk', clsId: cls.id, where: '#/k/' + cls.id });
   },
   xlsx(el) { xlsxClass(el.dataset.id); },
+  glogin() { closeModal(true); Sync.login().then(() => rerender()); },
+  async glogout() {
+    if (!confirm('구글 드라이브 저장을 끌까요? 이 컴퓨터의 기록은 그대로 남고, 드라이브의 기록도 지워지지 않습니다.')) return;
+    await Sync.logout(); closeModal(true); rerender(); toast('로그아웃했습니다. 이제 이 컴퓨터에만 저장합니다.');
+  },
+  async gsyncnow() { closeModal(true); if (Sync.status().state === 'need') { await Sync.login(); return; } toast('드라이브와 맞추는 중…'); if (!(await Sync.pull())) await Sync.push(); },
+  gsync() {
+    const st = Sync.status();
+    if (!st.user || st.state === 'need' || st.state === 'off') { Sync.login().then(() => rerender()); return; }
+    settingsModal();
+  },
   jobstop(el) { const j = JOBS.find(x => x.id === el.dataset.j); if (j) { j.ctl.abort(); j.phase = '멈추는 중…(지금 보낸 학생까지)'; renderJobs(); } },
   jobclose(el) { const k = JOBS.findIndex(x => x.id === el.dataset.j); if (k >= 0) { if (JOBS[k].resume) pendDel(JOBS[k].key); JOBS.splice(k, 1); } renderJobs(); },
   jobresume(el) {
@@ -1654,6 +1681,18 @@ document.addEventListener('drop', e => {
   e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) startPlan({ file: f });
 });
 
+const GICON = '<svg class="ic" viewBox="0 0 24 24"><path d="M7.7 3h8.6l5.2 9-4.3 7.5H6.8L2.5 12z"/><path d="M7.7 3l8.6 16.5M16.3 3L7.7 19.5M2.5 12h19"/></svg>';
+function renderGsync() {
+  const b = $('#gsync'); if (!b || typeof Sync === 'undefined' || !Sync.enabled()) return;
+  const st = Sync.status();
+  b.classList.remove('hide', 'ok', 'need', 'busy', 'err');
+  if (!st.user) { b.innerHTML = `${GICON}<span class="lb">구글 로그인</span>`; b.title = '구글 드라이브에 저장하고 다른 컴퓨터에서 이어서 하기'; return; }
+  const cls = { ok: 'ok', need: 'need', busy: 'busy', error: 'err' }[st.state] || '';
+  if (cls) b.classList.add(cls);
+  const lb = st.state === 'need' ? '드라이브 다시 연결' : st.state === 'busy' ? '저장 중…' : st.state === 'error' ? '드라이브 오류' : '드라이브';
+  b.innerHTML = `${GICON}<span class="lb">${lb}</span>`;
+  b.title = `${st.user}\n${st.note || ''}`;
+}
 /* ================= 시작 ================= */
 (async () => {
   try { const th = localStorage.getItem('aigrader-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) {}
@@ -1670,4 +1709,5 @@ document.addEventListener('drop', e => {
   }
   route();
   resumeJobs();
+  if (typeof Sync !== 'undefined') { Sync.onChange(renderGsync); renderGsync(); Sync.boot(); }
 })();

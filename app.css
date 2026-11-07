@@ -364,3 +364,10 @@ body.grading main#view{padding:0}
 .seg button:hover{color:var(--text)}
 .seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
 @media (max-width:820px){ #jobs{right:8px;left:8px;width:auto;bottom:76px} }
+
+/* 구글 드라이브 표시(위쪽 띠) */
+#gsync.ok .ic{color:var(--mint-ink)}
+#gsync.busy .ic{color:var(--accent);animation:spin 1.2s linear infinite}
+#gsync.need{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+#gsync.need .ic{color:var(--accent-ink)}
+#gsync.err .ic{color:var(--bad)}

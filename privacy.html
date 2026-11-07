@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>개인정보 처리방침 · AI 서논술형 채점</title>
+<style>
+  :root{--bg:#F5F4FA;--card:#fff;--text:#1E1B2E;--muted:#6B6880;--accent:#6E56CF;--line:#E7E4F0}
+  @media (prefers-color-scheme:dark){:root{--bg:#16131F;--card:#1F1B2C;--text:#ECE9F5;--muted:#A6A1B8;--accent:#B7A6FF;--line:#2F2A42}}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.75 "IBM Plex Sans KR","Noto Sans KR",system-ui,sans-serif}
+  main{max-width:760px;margin:0 auto;padding:32px 16px 60px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px 22px}
+  h1{font-size:22px;margin:0 0 4px} h2{font-size:16px;margin:22px 0 6px}
+  p,li{margin:4px 0} .muted{color:var(--muted);font-size:13px} a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main><div class="card">
+  <h1>개인정보 처리방침</h1>
+  <p class="muted">AI 서논술형 채점 · 2026년 11월 7일 시행</p>
+
+  <h2>1. 이 앱은 무엇인가요</h2>
+  <p>교사가 수행평가 답안을 채점하고 세특 초안을 쓰도록 돕는 웹앱입니다. 운영자가 따로 두는 서버가 없고, 모든 처리는 교사의 브라우저에서 이루어집니다.</p>
+
+  <h2>2. 어디에 저장되나요</h2>
+  <ul>
+    <li><b>이 브라우저</b>: 평가계획, 답안 그림, 채점 결과, 세특, 설정(Gemini API 키 포함)은 그 브라우저의 저장소(IndexedDB·localStorage)에 저장됩니다.</li>
+    <li><b>교사 본인의 구글 드라이브</b>(구글 로그인을 한 경우만): 위 자료가 로그인한 교사 본인 드라이브의 'AI 서논술형 채점' 폴더에 저장됩니다. 다른 컴퓨터에서 같은 계정으로 로그인해 이어서 쓰기 위한 것입니다.</li>
+  </ul>
+  <p>앱 운영자는 어느 쪽 자료에도 접근할 수 없습니다.</p>
+
+  <h2>3. 구글 계정 권한</h2>
+  <p>구글 로그인 시 <b>drive.file</b> 권한만 요청합니다. 이 권한으로는 이 앱이 만든 파일만 보고 고칠 수 있으며, 드라이브의 다른 파일은 볼 수 없습니다. 로그인한 계정의 이메일 주소는 화면에 표시하는 용도로만 그 브라우저에 저장합니다.
+  구글 사용자 데이터는 Google API 서비스 사용자 데이터 정책(제한적 사용 요건 포함)을 따라 이 기능을 제공하는 데만 쓰며, 다른 사람에게 넘기거나 광고에 쓰지 않습니다.</p>
+  <p>권한은 언제든 앱의 설정 → 로그아웃, 또는 <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">구글 계정 → 서드 파티 연결</a>에서 해제할 수 있습니다. 드라이브의 'AI 서논술형 채점' 폴더를 지우면 저장된 자료도 지워집니다.</p>
+
+  <h2>4. AI 로 보내는 내용</h2>
+  <p>AI 채점·세특 작성을 누를 때만, 교사가 입력한 Gemini API 키로 Google Gemini 에 채점 기준과 답안 그림을 보냅니다. 답안 그림의 이름·학번 칸은 교사가 지정한 대로 가린 뒤 보냅니다. 결제를 등록하지 않은 무료 키는 Google 이 보낸 내용을 서비스 개선에 쓸 수 있습니다.</p>
+
+  <h2>5. 문의</h2>
+  <p>hapsum14@gmail.com</p>
+  <p class="muted" style="margin-top:18px"><a href="./">앱으로 돌아가기</a></p>
+</div></main>
+</body>
+</html>
