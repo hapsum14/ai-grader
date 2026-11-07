@@ -350,7 +350,10 @@ function modal(html, wide) {
   $('#mbox').innerHTML = html;
   $('#modal').classList.remove('hide');
 }
-function closeModal() { $('#modal').classList.add('hide'); $('#mbox').innerHTML = ''; }
+function closeModal(force) {
+  if ($('#modal').dataset.lock && force !== true) return; // 진행 중인 창은 Esc 로 닫지 않는다
+  $('#modal').classList.add('hide'); $('#mbox').innerHTML = '';
+}
 $('#modal').addEventListener('mousedown', e => { if (e.target.id === 'modal' && !$('#modal').dataset.lock) closeModal(); });
 
 /* ================= 처음 화면 ================= */
@@ -511,7 +514,8 @@ function vTask(tid) {
       <select class="in" style="width:auto" data-f="mode"><option value="count" ${t.mode !== 'points' ? 'selected' : ''}>충족한 항목 수로 점수</option><option value="points" ${t.mode === 'points' ? 'selected' : ''}>항목별 배점 합산</option></select></div>
     ${crit || '<p class="muted">항목이 없습니다.</p>'}
     <div class="row" style="margin-top:10px"><button class="btn sm" data-act="addcrit">+ 항목 추가</button>
-      <button class="btn sm soft" data-act="guide" data-id="${t.id}">${ICON.wand}AI 로 판단 기준·모범 답안 만들기</button></div>
+      <button class="btn sm soft" data-act="guide" data-id="${t.id}">${ICON.wand}AI 로 판단 기준·모범 답안 ${hasGuide(t) ? '다시 ' : ''}만들기</button>
+      <span class="small muted">${hasGuide(t) ? 'AI 채점 때 이 판단 기준과 모범 답안을 함께 봅니다.' : '비어 있으면 첫 AI 채점 때 저절로 만듭니다.'}</span></div>
     ${t.mode !== 'points' ? `<label class="f" style="margin-top:16px">점수 환산(충족 항목 수 → 점수)</label><div class="scale">${scale}<button class="btn sm" data-act="addscale">+</button></div>` : ''}
     <label class="f" style="margin-top:14px">특수 상황 점수(백지·미참여·결석 등)</label><div class="scale">${specials}<button class="btn sm" data-act="addspec">+</button></div>
   </div>
@@ -931,6 +935,24 @@ function updBytes(t) {
   const w = $('#warns'); if (w) w.innerHTML = (t ? lint(t) : []).map(x => `<li>${esc(x)}</li>`).join('');
 }
 
+// 판단 기준·모범 답안: 채점 기준 항목마다 "무엇이 있으면 충족인지"와 문항별 정답 요지.
+// 비어 있으면 첫 AI 채점 전에 저절로 만든다(이름 칸을 가린 뒤라 첫 답안지를 가린 채로 문항지로 쓴다)
+function hasGuide(task) { return task.criteria.some(c => (c.guide || '').trim()) || !!(task.answerKey || '').trim(); }
+async function makeGuideFor(task, cls) {
+  const k = cls && cls.subs.length ? cls : task.classes.find(x => x.subs.length);
+  const imgs = k ? await aiImages(k, k.subs[0]) : [];
+  const r = await AI.makeGuide(task, imgs);
+  let n = 0;
+  (r.criteria || []).forEach(c => { const x = task.criteria[Number(c.index) - 1]; if (x && c.guide) { x.guide = c.guide; n++; } });
+  if (r.answerKey) task.answerKey = r.answerKey;
+  task.guideAt = Date.now(); save();
+  return n;
+}
+async function ensureGuide(task, cls) {
+  if (hasGuide(task) || !task.criteria.length) return false;
+  try { await makeGuideFor(task, cls); return true; }
+  catch (e) { toast('판단 기준을 만들지 못해 계획서 기준만으로 채점합니다: ' + e.message, 5000); return false; }
+}
 async function runAIGrade(task, cls, no, signal) {
   const sub = subOf(cls, no); if (!sub) throw new Error('답안이 없습니다.');
   const imgs = await aiImages(cls, sub);
@@ -972,6 +994,7 @@ async function runBatch(title, items, fn) {
   $('#modal').dataset.lock = '1';
   $('#bstop').onclick = () => ctl.abort();
   const upd = () => {
+    if (!$('#bmsg')) return; // 창이 닫혀도 일은 계속
     $('#bmsg').textContent = `${ok + fail}/${items.length} 처리 (성공 ${ok}, 실패 ${fail})`;
     $('#bbar').style.width = (items.length ? (ok + fail) / items.length * 100 : 100) + '%';
     $('#blog').innerHTML = log.slice(-30).map(esc).join('<br>');
@@ -1092,6 +1115,7 @@ const HELP = [
     <li><b>이름 칸 가리기</b>: 첫 쪽의 학번·이름 칸을 끌어서 상자로 덮습니다. 스캔마다 위치가 조금 다르니 <b>넉넉하게</b> 그리고 ‹ › 로 다른 번호도 확인하세요. 화면에는 원본이 보이고 AI 로 보낼 때만 검게 칠합니다(채점 화면의 '가림 보기'로 확인).</li></ul>`],
   ['grade', '채점하기', `<ul>
     <li>왼쪽 원본(또는 <b>인식 결과</b> = AI 가 옮겨 적은 답), 오른쪽에 채점 기준 체크와 점수.</li>
+    <li><b>판단 기준</b>: 계획서의 채점 기준은 영역 전체에 대한 말이라, 첫 AI 채점 전에 첫 답안지(이름 가림)를 문항지로 읽어 기준마다 '무엇이 있으면 충족인지'와 문항별 모범 답안 요지를 저절로 만듭니다. 채점 기준 화면에서 읽고 고칠 수 있습니다.</li>
     <li><b>AI 채점 실행</b>: 기준마다 충족/미충족과 근거(학생 답 인용)를 보여 주고, 아직 손대지 않은 학생이면 체크를 미리 채워 둡니다. 최종 점수는 선생님이 확인해 <b>채점 완료</b>를 누릅니다.</li>
     <li>점수 단추(20·18…)로 바로 정하거나, 백지·결석 단추로 특수 점수를 줄 수 있습니다. <b>미제출/미응시</b>는 위쪽 동그라미로 고릅니다.</li>
     <li>단축키: <span class="kbd">←</span><span class="kbd">→</span> 학생 이동 · <span class="kbd">1</span>~<span class="kbd">9</span> 기준 체크 · <span class="kbd">Ctrl</span>+<span class="kbd">Enter</span> 채점 완료 후 다음 · <span class="kbd">?</span> 도움말.</li></ul>`],
@@ -1240,11 +1264,8 @@ const ACT = {
     const k = task.classes.find(x => x.subs.length);
     modal(`<h2>판단 기준 만들기</h2><p>${k ? `${esc(k.name)} 첫 답안지(이름 가림)를 문항지로 읽고 ` : ''}채점 기준마다 판단 기준과 모범 답안 요지를 만드는 중…</p><div class="prog"><i style="width:60%"></i></div>`);
     try {
-      const imgs = k ? await aiImages(k, k.subs[0]) : [];
-      const r = await AI.makeGuide(task, imgs);
-      (r.criteria || []).forEach(c => { const x = task.criteria[Number(c.index) - 1]; if (x && c.guide) x.guide = c.guide; });
-      if (r.answerKey) task.answerKey = r.answerKey;
-      save(); closeModal(); rerender(); toast('판단 기준을 채웠습니다. 읽어 보고 고쳐 주세요.', 3500);
+      await makeGuideFor(task, k);
+      closeModal(); rerender(); toast('판단 기준을 채웠습니다. 읽어 보고 고쳐 주세요.', 3500);
     } catch (e) { closeModal(); toast(e.message, 4500); }
   },
   addclass(el) { addClassModal(el.dataset.id); },
@@ -1281,12 +1302,19 @@ const ACT = {
     await DB.delPrefix('img', cls.id + ':');
     task.classes = task.classes.filter(k => k !== cls); save(true); location.hash = '#/t/' + task.id;
   },
-  batchgrade(el) {
+  async batchgrade(el) {
     const { course, task, cls } = findClass(el.dataset.id); task._subject = course.name;
     if (!App.settings().apiKey) { settingsModal(); return; }
     if (!cls.masks.length && !confirm('이름 칸 가리기를 하지 않았습니다. 그래도 답안을 그대로 AI 로 보낼까요?')) return;
     const items = []; for (let no = 1; no <= cls.size; no++) { const s = cls.students[no]; const st = statusOf(cls, no); if (st === '채점 전') items.push(no); }
     if (!items.length) { toast('AI 채점할 학생이 없습니다(모두 채점했거나 답안이 없음).'); return; }
+    if (!hasGuide(task)) {
+      modal(`<h2>채점 준비</h2><p>판단 기준이 비어 있어 먼저 만듭니다. ${esc(cls.name)} 첫 답안지(이름 가림)를 문항지로 읽고, 채점 기준마다 무엇이 있으면 충족인지와 문항별 모범 답안 요지를 정리하는 중…</p><div class="prog"><i style="width:55%"></i></div>`);
+      $('#modal').dataset.lock = '1';
+      const made = await ensureGuide(task, cls);
+      delete $('#modal').dataset.lock;
+      if (made) toast('판단 기준을 만들었습니다. 채점 기준 화면에서 읽고 고칠 수 있습니다.', 3500);
+    }
     runBatch(`AI 채점 — ${items.length}명`, items, async (no, sig) => { await runAIGrade(task, cls, no, sig); return 'AI ' + aiScoreOf(task, cls.students[no]) + '점'; });
   },
   batchseteuk(el) {
@@ -1325,7 +1353,9 @@ const ACT = {
     const { task, cls, no } = gctx;
     if (!App.settings().apiKey) { settingsModal(); return; }
     if (!cls.masks.length && !confirm('이름 칸 가리기를 하지 않았습니다. 답안을 그대로 AI 로 보낼까요?')) return;
-    el.disabled = true; el.innerHTML = 'AI 가 답안을 읽는 중… (10~40초)';
+    el.disabled = true;
+    if (!hasGuide(task)) { el.innerHTML = '판단 기준을 먼저 만드는 중…'; if (await ensureGuide(task, cls)) toast('판단 기준을 먼저 만들었습니다(채점 기준 화면에서 고칠 수 있음).', 3500); }
+    el.innerHTML = 'AI 가 답안을 읽는 중… (10~40초)';
     try { await runAIGrade(task, cls, no); if (gctx && gctx.no === no) rerender(); toast(`${no}번 AI 채점: ${aiScoreOf(task, cls.students[no])}점`); }
     catch (e) { toast(e.message, 5000); el.disabled = false; el.textContent = 'AI 채점 실행'; }
   },
