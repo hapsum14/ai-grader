@@ -71,7 +71,7 @@ function save(now) {
     .then(() => { const e2 = document.getElementById('saved'); if (e2) { const d = new Date(); e2.textContent = `저장됨 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; } })
     .catch(e => toast('저장 실패: ' + e.message, 5000));
   if (now) return run();
-  saveTimer = setTimeout(run, 300);
+  saveTimer = setTimeout(() => { saveTimer = null; run(); }, 300);
 }
 const urlCache = new Map();
 async function imgURL(key) {
@@ -1049,10 +1049,39 @@ async function runSeteuk(task, cls, no, signal) {
 // 한꺼번에 하는 일은 화면 오른쪽 아래 작은 판에서 뒤로 돌린다 — 그동안 다른 반·학생을 보고 채점해도 된다
 const JOBS = [];
 function jobFor(key) { return JOBS.find(j => j.key === key && !j.done); }
+// 도는 중인 작업을 적어 두었다가, 창을 닫아 멈췄으면 다음에 열 때 '이어서 하기'를 보여 준다
+const PEND = 'aigrader-jobs';
+function pendGet() { try { return JSON.parse(localStorage.getItem(PEND) || '[]'); } catch (e) { return []; } }
+function pendSet(a) { try { localStorage.setItem(PEND, JSON.stringify(a)); } catch (e) {} }
+function pendAdd(j) { if (!j.kind) return; pendSet(pendGet().filter(x => x.key !== j.key).concat({ key: j.key, kind: j.kind, clsId: j.clsId, title: j.title, at: Date.now() })); }
+function pendDel(key) { pendSet(pendGet().filter(x => x.key !== key)); }
+function leftFor(p) {
+  const { task, cls } = findClass(p.clsId); if (!cls) return 0;
+  let n = 0;
+  for (let no = 1; no <= cls.size; no++) {
+    const st = statusOf(cls, no), s = cls.students[no];
+    if (p.kind === 'grade' ? st === '채점 전' : (s && !s.seteuk && (st === '채점 완료' || st === 'AI 채점'))) n++;
+  }
+  return n;
+}
+function resumeJobs() {
+  const list = pendGet().filter(p => findClass(p.clsId).cls && leftFor(p) > 0);
+  pendSet(list);
+  list.forEach(p => {
+    if (JOBS.some(j => j.key === p.key)) return;
+    JOBS.push({ id: uid(), key: p.key, title: p.title.replace(/ — \d+명$/, ''), resume: p, left: leftFor(p), done: true, ok: 0, fail: 0, log: [], total: 0 });
+  });
+  renderJobs();
+}
 function renderJobs() {
   let box = $('#jobs');
   if (!box) { box = document.createElement('div'); box.id = 'jobs'; document.body.appendChild(box); }
   box.innerHTML = JOBS.map(j => {
+    if (j.resume) return `<div class="job resume">
+      <div class="jh"><b>${esc(j.title)}</b><span class="sp"></span><button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button></div>
+      <div class="jm">지난번에 창을 닫아 멈췄습니다 · 남은 ${j.left}명</div>
+      <div class="row" style="gap:6px"><button class="btn sm primary" data-act="jobresume" data-j="${j.id}">이어서 하기</button>
+        <a class="btn sm" href="#/k/${j.resume.clsId}">반 화면</a></div></div>`;
     const n = j.ok + j.fail, pct = j.total ? Math.round(n / j.total * 100) : 0;
     const head = j.done ? (j.stopped ? '멈춤' : '끝') + ` — 성공 ${j.ok}, 실패 ${j.fail}`
       : j.phase || `${n}/${j.total}명 · 성공 ${j.ok}${j.fail ? ', 실패 ' + j.fail : ''}`;
@@ -1081,7 +1110,8 @@ function softRefresh(clsId, no) {
 async function runBatch(title, items, fn, opt = {}) {
   const j = { id: uid(), key: opt.key || title, title, total: items.length, ok: 0, fail: 0, log: [], done: false, stopped: false,
     open: false, ctl: new AbortController(), where: opt.where || '', phase: '' };
-  JOBS.push(j); BUSY++; renderJobs();
+  j.kind = opt.kind; j.clsId = opt.clsId;
+  JOBS.push(j); BUSY++; pendAdd(j); renderJobs();
   toast('오른쪽 아래에서 진행합니다. 그동안 다른 화면에서 일해도 됩니다.', 3000);
   try {
     if (opt.pre) { j.phase = opt.preMsg || '준비 중…'; renderJobs(); await opt.pre(j); j.phase = ''; renderJobs(); }
@@ -1097,7 +1127,7 @@ async function runBatch(title, items, fn, opt = {}) {
     await Promise.all([worker(), worker()]);
   } catch (e) { j.log.push('멈춤: ' + e.message); j.ctl.abort(); }
   BUSY--;
-  j.done = true; j.stopped = j.ctl.signal.aborted; j.phase = ''; save(true); renderJobs();
+  j.done = true; j.stopped = j.ctl.signal.aborted; j.phase = ''; save(true); pendDel(j.key); renderJobs();
   if (opt.clsId) softRefresh(opt.clsId);
   toast(`${title}: ${j.stopped ? '멈춤' : '끝'} — 성공 ${j.ok}, 실패 ${j.fail}`, 4000);
   // 실패 없이 끝난 판은 1분 뒤 저절로 치운다
@@ -1426,7 +1456,7 @@ const ACT = {
     const lv = task.strict || '보통';
     runBatch(`${cls.name} AI 채점(${lv}) — ${items.length}명`, items,
       async (no, sig) => { await runAIGrade(task, cls, no, sig); return 'AI ' + aiScoreOf(task, cls.students[no]) + '점'; },
-      { key: 'grade:' + cls.id, clsId: cls.id, where: '#/k/' + cls.id,
+      { key: 'grade:' + cls.id, kind: 'grade', clsId: cls.id, where: '#/k/' + cls.id,
         pre: hasGuide(task) ? null : async j => { if (await ensureGuide(task, cls)) j.log.push('판단 기준을 먼저 만들었습니다(채점 기준 화면에서 고칠 수 있음).'); },
         preMsg: '판단 기준·모범 답안을 먼저 만드는 중…' });
   },
@@ -1437,11 +1467,16 @@ const ACT = {
     if (!items.length) { toast('세특을 만들 학생이 없습니다(채점된 학생 중 세특이 빈 학생만 만듭니다).'); return; }
     if (jobFor('seteuk:' + cls.id)) { toast('이 반은 이미 세특을 만드는 중입니다.'); return; }
     runBatch(`${cls.name} 세특 — ${items.length}명`, items, async (no, sig) => { const r = await runSeteuk(task, cls, no, sig); return r.b + 'B'; },
-      { key: 'seteuk:' + cls.id, clsId: cls.id, where: '#/k/' + cls.id });
+      { key: 'seteuk:' + cls.id, kind: 'seteuk', clsId: cls.id, where: '#/k/' + cls.id });
   },
   xlsx(el) { xlsxClass(el.dataset.id); },
   jobstop(el) { const j = JOBS.find(x => x.id === el.dataset.j); if (j) { j.ctl.abort(); j.phase = '멈추는 중…(지금 보낸 학생까지)'; renderJobs(); } },
-  jobclose(el) { const k = JOBS.findIndex(x => x.id === el.dataset.j); if (k >= 0) JOBS.splice(k, 1); renderJobs(); },
+  jobclose(el) { const k = JOBS.findIndex(x => x.id === el.dataset.j); if (k >= 0) { if (JOBS[k].resume) pendDel(JOBS[k].key); JOBS.splice(k, 1); } renderJobs(); },
+  jobresume(el) {
+    const k = JOBS.findIndex(x => x.id === el.dataset.j); if (k < 0) return;
+    const p = JOBS[k].resume; JOBS.splice(k, 1); pendDel(p.key); renderJobs();
+    ACT[p.kind === 'grade' ? 'batchgrade' : 'batchseteuk']({ dataset: { id: p.clsId } });
+  },
   jobtoggle(el) { const j = JOBS.find(x => x.id === el.dataset.j); if (j) { j.open = !j.open; renderJobs(); } },
   strict(el) {
     const { task } = findTask(el.dataset.id); if (!task) return;
@@ -1588,6 +1623,25 @@ function themeLabel() {
 // 오래 걸리는 일(PDF 그리기·한꺼번에 채점) 중에 창을 닫으려 하면 한 번 묻는다
 let BUSY = 0;
 window.addEventListener('beforeunload', e => { if (BUSY > 0) { e.preventDefault(); e.returnValue = ''; } });
+// 창을 닫거나 다른 창으로 넘어갈 때: 고치던 칸을 반영하고 곧바로 저장(0.3초 기다리지 않음)
+function flushNow() {
+  const a = document.activeElement;
+  if (a && a.matches && a.matches('[data-f]')) a.dispatchEvent(new Event('change', { bubbles: true }));
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; save(true); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNow(); });
+window.addEventListener('pagehide', flushNow);
+// 마지막으로 본 화면을 기억했다가 다시 열면 그 화면에서 시작
+window.addEventListener('hashchange', () => { try { localStorage.setItem('aigrader-route', location.hash); } catch (e) {} });
+function routeAlive(h) {
+  const m = (h || '').match(/^#\/(c|t|k|g|s)\/([^/]+)(?:\/(.+))?$/);
+  if (!m) return false;
+  if (m[1] === 'c' || m[1] === 's') return !!findCourse(m[2]);
+  if (m[1] === 't') return !!findTask(m[2]).task;
+  const { cls } = findClass(m[2]);
+  if (!cls) return false;
+  return m[1] === 'k' || Number(m[3]) <= cls.size;
+}
 
 // 처음 화면 어디에든 계획서 파일을 끌어 놓으면 분석
 let dragN = 0;
@@ -1610,5 +1664,10 @@ document.addEventListener('drop', e => {
   catch (e) { toast('저장소를 열 수 없습니다(사생활 보호 창?). 이 창을 닫으면 기록이 사라집니다.', 6000); }
   // 브라우저가 공간이 부족할 때 기록을 지우지 않도록 요청(지원하는 브라우저만)
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+  if (!location.hash || location.hash === '#/' || location.hash === '#') {
+    let last = ''; try { last = localStorage.getItem('aigrader-route') || ''; } catch (e) {}
+    if (last && last !== '#/' && routeAlive(last)) { history.replaceState(null, '', last); toast('지난번에 보던 화면에서 이어 갑니다.', 2500); }
+  }
   route();
+  resumeJobs();
 })();
