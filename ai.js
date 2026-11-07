@@ -89,9 +89,17 @@ const AI = (() => {
           if (buf.trim().startsWith('data:')) { try { take(JSON.parse(buf.trim().slice(5))); } catch (e) {} }
           done(); signal && signal.removeEventListener('abort', onAbort);
         } else take(await r.json());
-        if (!txt) throw new Error('AI 가 답을 주지 않았습니다(' + (why || '빈 응답') + ').');
-        try { return JSON.parse(txt); }
-        catch (e) { throw new Error(why === 'MAX_TOKENS' ? 'AI 답이 너무 길어 잘렸습니다. 계획서에서 수행평가 부분만 붙여 넣어 다시 해 보세요.' : 'AI 응답을 읽지 못했습니다. 다시 시도해 주세요.'); }
+        // 빈 답·깨진 답은 가끔 한 번씩 나온다 — 한 번은 저절로 다시(두 번째는 다른 모델로)
+        const again = () => {
+          if (opts._parseRetry >= 2 || why === 'MAX_TOKENS' || why === 'SAFETY') return null;
+          const n = opts._parseRetry ? fallback(model, tried) : model;
+          if (!n) return null;
+          opts.onWait && opts.onWait(0, describe(n).label, 'broken');
+          return call(Object.assign({}, opts, { _model: n, _tried: n === model ? tried : tried.concat(n), _parseRetry: (opts._parseRetry || 0) + 1 }), retried);
+        };
+        if (!txt) { const n = again(); if (n) return n; throw new Error('AI 가 답을 주지 않았습니다(' + (why || '빈 응답') + ').'); }
+        try { return JSON.parse(txt.trim().replace(/^```(?:json)?\s*/, '').replace(/```\s*$/, '')); }
+        catch (e) { const n = again(); if (n) return n; throw new Error(why === 'MAX_TOKENS' ? 'AI 답이 너무 길어 잘렸습니다. 계획서에서 수행평가 부분만 붙여 넣어 다시 해 보세요.' : 'AI 응답을 읽지 못했습니다. 다시 시도해 주세요.'); }
       }
       let msg = '';
       try { msg = (await r.json()).error.message; } catch (e) { msg = r.statusText; }

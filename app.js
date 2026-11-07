@@ -426,7 +426,7 @@ async function startPlan(src) {
       ? `글 ${full.length.toLocaleString()}자를 읽었습니다. AI 가 수행평가 채점 기준을 정리하는 중…`
       : `글 ${full.length.toLocaleString()}자 가운데 수행평가 부분 <b>${focus.length.toLocaleString()}자</b>만 골라 AI 가 채점 기준을 정리하는 중…`;
     timer = setInterval(tick, 500); tick();
-    const r = await AI.extractPlan(send, n => { got = n; phase = ''; }, (s, alt, why) => { got = 0; phase = alt ? (why === 'slow' ? ` · 답이 늦어 더 빠른 ${alt} 로 바꿈` : ` · 서버가 바빠 ${alt} 로 바꿔 시도`) : ` · 서버가 바빠 ${s}초 뒤 다시 시도`; });
+    const r = await AI.extractPlan(send, n => { got = n; phase = ''; }, (s, alt, why) => { got = 0; phase = alt ? (why === 'broken' ? ` · 답이 깨져 ${alt} 로 다시 받는 중` : why === 'slow' ? ` · 답이 늦어 더 빠른 ${alt} 로 바꿈` : ` · 서버가 바빠 ${alt} 로 바꿔 시도`) : ` · 서버가 바빠 ${s}초 뒤 다시 시도`; });
     clearInterval(timer);
     const c = {
       id: uid(), name: r.subject || (src.file ? src.file.name : '새 과목'), grade: r.grade || '', semester: r.semester || '', year: r.school_year || '',
