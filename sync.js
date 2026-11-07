@@ -181,7 +181,7 @@ const Sync = (() => {
           <p>이 컴퓨터와 구글 드라이브의 채점 기록이 서로 다릅니다.</p>
           <div class="grid2" style="gap:10px;margin:12px 0">
             <div class="note"><b>구글 드라이브</b><br>과목 ${b.c}개 · 반 ${b.k}개 · 처리한 학생 ${b.g}명<br><span class="small muted">마지막 저장 ${when(rUpd)}</span></div>
-            <div class="note"><b>이 컴퓨터</b><br>과목 ${a.c}개 · 반 ${a.k}개 · 처리한 학생 ${a.g}명<br><span class="small muted">마지막 맞춘 때 ${when(meta().synced)}</span></div>
+            <div class="note"><b>이 컴퓨터</b><br>과목 ${a.c}개 · 반 ${a.k}개 · 처리한 학생 ${a.g}명<br><span class="small muted">${meta().dirty ? '드라이브에 아직 안 올린 변경이 있음' : '이 컴퓨터에 따로 있던 기록'}</span></div>
           </div>
           <p class="small muted">고르지 않은 쪽 기록은 덮어씁니다. 드라이브 것을 고르면 이 컴퓨터 기록은 한 벌 따로 남겨 둡니다.</p>
           <div class="foot"><button class="btn" id="cfl">이 컴퓨터 것 쓰기</button><button class="btn primary" id="cfr">드라이브 것 쓰기</button></div>`);
@@ -215,14 +215,16 @@ const Sync = (() => {
     if (!f) { await pushSettings(); return; }
     if (meta().setDirty) { await pushSettings(); return; }
     const j = await (await req(`${API}/files/${f.id}?alt=media`, {}, true)).json();
+    // 이 컴퓨터에 키가 없을 때(새 컴퓨터)만 드라이브의 설정을 가져오고, 있으면 이 컴퓨터 것을 올린다
+    const cur = App.settings();
+    let up = false;
     quiet = true;
-    if (j.settings) {
-      const cur = App.settings();
-      // 이 컴퓨터에 키가 없거나 드라이브 쪽이 있으면 드라이브 것을 쓴다
-      App.saveSettings(Object.assign({}, cur, j.settings, { apiKey: j.settings.apiKey || cur.apiKey }));
-    }
-    if (Array.isArray(j.style) && j.style.length) Style.set(j.style);
+    if (j.settings && j.settings.apiKey && !cur.apiKey) App.saveSettings(Object.assign({}, cur, j.settings));
+    else if (cur.apiKey && (!j.settings || j.settings.apiKey !== cur.apiKey || j.settings.model !== cur.model)) up = true;
+    if (Array.isArray(j.style) && j.style.length && !Style.get().length) Style.set(j.style);
+    else if (Style.get().length && (!Array.isArray(j.style) || j.style.length !== Style.get().length)) up = true;
     quiet = false;
+    if (up) await pushSettings();
   }
 
   /* ---------- 답안 그림 ---------- */

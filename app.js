@@ -1272,6 +1272,7 @@ const HELP = [
     <li><b>이름 칸 가리기</b>: 첫 쪽의 학번·이름 칸을 끌어서 상자로 덮습니다. 스캔마다 위치가 조금 다르니 <b>넉넉하게</b> 그리고 ‹ › 로 다른 번호도 확인하세요. 화면에는 원본이 보이고 AI 로 보낼 때만 검게 칠합니다(채점 화면의 '가림 보기'로 확인).</li></ul>`],
   ['grade', '채점하기', `<ul>
     <li>왼쪽 원본(또는 <b>인식 결과</b> = AI 가 옮겨 적은 답), 오른쪽에 채점 기준 체크와 점수.</li>
+    <li><b>다른 컴퓨터에서 이어서</b>: 위쪽 띠의 '구글 로그인'을 누르면 기록·답안 그림·API 키가 내 구글 드라이브에도 저장됩니다. 다른 컴퓨터에서 같은 계정으로 로그인하면 그대로 이어서 합니다.</li>
     <li><b>세특 문장 구조</b>: '○○ 수행평가에서는 …함. (특히/또한) …함.' 두 문장 틀로, 성취 수준(상·중·하)에 맞는 서술어를 씁니다. 설정 → '기존 세특 엑셀 불러오기'로 예전에 쓴 세특을 넣으면 활동 문장을 본보기로 삼아 문체를 맞춥니다.</li>
     <li><b>채점 엄격도</b>: 관대하게 · 보통 · 엄격하게 가운데 고르면, 답이 기준에 어느 정도 들어올 때 충족으로 볼지가 바뀝니다(반 화면·채점 기준 화면). 틀린 과학 내용은 어느 쪽이든 미충족입니다.</li>
     <li><b>뒤에서 진행</b>: 한꺼번에 채점·세특은 오른쪽 아래 작은 판에서 돌아갑니다. 그동안 다른 학생을 직접 채점해도 됩니다. 창을 닫거나 새로 고치면 멈춥니다.</li>
@@ -1685,6 +1686,9 @@ const GICON = '<svg class="ic" viewBox="0 0 24 24"><path d="M7.7 3h8.6l5.2 9-4.3
 function renderGsync() {
   const b = $('#gsync'); if (!b || typeof Sync === 'undefined' || !Sync.enabled()) return;
   const st = Sync.status();
+  // 로그인·로그아웃이 바뀌면 화면(첫 화면 안내, 메뉴 아래 문구)도 다시 그린다
+  if (renderGsync.user !== undefined && renderGsync.user !== (st.user || '')) setTimeout(() => route({ keepSide: true }), 0);
+  renderGsync.user = st.user || '';
   b.classList.remove('hide', 'ok', 'need', 'busy', 'err');
   if (!st.user) { b.innerHTML = `${GICON}<span class="lb">구글 로그인</span>`; b.title = '구글 드라이브에 저장하고 다른 컴퓨터에서 이어서 하기'; return; }
   const cls = { ok: 'ok', need: 'need', busy: 'busy', error: 'err' }[st.state] || '';
