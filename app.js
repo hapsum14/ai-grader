@@ -516,6 +516,8 @@ function vTask(tid) {
     <div class="row" style="margin-top:10px"><button class="btn sm" data-act="addcrit">+ 항목 추가</button>
       <button class="btn sm soft" data-act="guide" data-id="${t.id}">${ICON.wand}AI 로 판단 기준·모범 답안 ${hasGuide(t) ? '다시 ' : ''}만들기</button>
       <span class="small muted">${hasGuide(t) ? 'AI 채점 때 이 판단 기준과 모범 답안을 함께 봅니다.' : '비어 있으면 첫 AI 채점 때 저절로 만듭니다.'}</span></div>
+    <label class="f" style="margin-top:16px">AI 채점 엄격도 — 답이 기준에 어느 정도 들어오면 충족으로 볼지</label>
+    <div class="row">${strictSeg(t)}<span class="small muted">${STRICT_NOTE[t.strict || '보통']}</span></div>
     ${t.mode !== 'points' ? `<label class="f" style="margin-top:16px">점수 환산(충족 항목 수 → 점수)</label><div class="scale">${scale}<button class="btn sm" data-act="addscale">+</button></div>` : ''}
     <label class="f" style="margin-top:14px">특수 상황 점수(백지·미참여·결석 등)</label><div class="scale">${specials}<button class="btn sm" data-act="addspec">+</button></div>
   </div>
@@ -762,6 +764,7 @@ function vClass(kid) {
     <div class="scard c"><span class="l">세특 초안</span><span class="v">${nSet}<small> / ${cls.size}명</small></span><span class="s">목표 ${App.settings().byteMin}~${max}B</span></div>
   </div>
   <div class="row" style="margin-bottom:14px">
+    ${strictSeg(task)}
     <button class="btn primary" data-act="batchgrade" data-id="${cls.id}">${ic('bot')}AI 채점 한꺼번에</button>
     <button class="btn soft" data-act="batchseteuk" data-id="${cls.id}">${ICON.wand}세특 한꺼번에 만들기</button>
     <a class="btn" href="#/k/${cls.id}/pages">${ICON.img}답안 나누기·이름 가리기</a>
@@ -905,7 +908,7 @@ function vGrade(kid, no) {
           ${s.ai.blank ? '<p class="note">AI 판단: 백지 또는 의미 있는 답이 거의 없음</p>' : ''}${s.ai.unreadable ? '<p class="note">AI 판단: 글씨가 흐리거나 잘려 판단이 어려움 — 원본을 직접 확인하세요</p>' : ''}
           <div class="small muted" style="margin-bottom:4px">학생용 피드백</div><div class="fb">${esc(s.ai.feedback || '')}</div>
           <div class="small muted" style="margin:10px 0 4px">관찰 요약(세특 재료)</div><div class="fb">${esc(s.ai.observation || '')}</div>
-          <div class="row" style="margin-top:10px;justify-content:space-between"><span class="small faint">${esc(s.ai.model || '')} · ${new Date(s.ai.at).toLocaleString()}</span><button class="btn sm" data-act="aigrade">${ICON.bot}다시 채점</button></div>`
+          <div class="row" style="margin-top:10px;justify-content:space-between"><span class="small faint">${s.ai.strict ? esc(s.ai.strict) + ' 기준 · ' : ''}${esc(s.ai.model || '')} · ${new Date(s.ai.at).toLocaleString()}</span><button class="btn sm" data-act="aigrade">${ICON.bot}다시 채점</button></div>`
         : `<div class="aibox">AI 채점을 실행하면 학생 답안을 분석한<br>채점 근거와 피드백을 볼 수 있습니다.<br><br>
             <button class="btn primary" data-act="aigrade" ${sub ? '' : 'disabled'}>${ICON.wand}AI 채점 실행</button></div>`}
         <p class="small faint" style="margin:10px 0 0">AI 채점 결과는 틀릴 수 있습니다. 최종 점수는 선생님이 확인해 정합니다.</p>
@@ -937,6 +940,16 @@ function updBytes(t) {
 
 // 판단 기준·모범 답안: 채점 기준 항목마다 "무엇이 있으면 충족인지"와 문항별 정답 요지.
 // 비어 있으면 첫 AI 채점 전에 저절로 만든다(이름 칸을 가린 뒤라 첫 답안지를 가린 채로 문항지로 쓴다)
+const STRICT_NOTE = {
+  '관대': '핵심 개념이 방향만 맞으면 용어가 서툴거나 이유가 짧아도 충족. 애매하면 충족.',
+  '보통': '핵심 개념과 이유가 맞으면 충족, 핵심 이유가 빠지거나 틀리면 미충족.',
+  '엄격': '요구한 요소가 모두 정확한 용어로 논리적으로 있어야 충족. 애매하면 미충족.',
+};
+function strictSeg(task) {
+  const v = task.strict || '보통';
+  return `<span class="seg" title="AI 채점 엄격도 — ${esc(STRICT_NOTE[v])}">${['관대', '보통', '엄격'].map(x =>
+    `<button class="${x === v ? 'on' : ''}" data-act="strict" data-id="${task.id}" data-v="${x}">${x === '관대' ? '관대하게' : x === '엄격' ? '엄격하게' : '보통'}</button>`).join('')}</span>`;
+}
 function hasGuide(task) { return task.criteria.some(c => (c.guide || '').trim()) || !!(task.answerKey || '').trim(); }
 async function makeGuideFor(task, cls) {
   const k = cls && cls.subs.length ? cls : task.classes.find(x => x.subs.length);
@@ -959,7 +972,7 @@ async function runAIGrade(task, cls, no, signal) {
   const r = await AI.grade(task, imgs, signal);
   const s = stu(cls, no);
   r.criteria = (r.criteria || []).map(c => ({ index: Number(c.index), met: !!c.met, points: Number(c.points) || 0, evidence: c.evidence || '', reason: c.reason || '' }));
-  s.ai = Object.assign(r, { at: Date.now(), model: AI.isMock() ? '모의' : App.settings().model });
+  s.ai = Object.assign(r, { at: Date.now(), model: AI.isMock() ? '모의' : App.settings().model, strict: task.strict || '보통' });
   if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
   if (!s.feedback && r.feedback) s.feedback = r.feedback;
   save();
@@ -983,37 +996,62 @@ async function runSeteuk(task, cls, no, signal) {
 }
 
 /* ================= 한꺼번에 ================= */
-async function runBatch(title, items, fn) {
-  const ctl = new AbortController();
-  let ok = 0, fail = 0, i = 0;
-  BUSY++;
-  const log = [];
-  modal(`<h2>${esc(title)}</h2><p id="bmsg">준비 중…</p><div class="prog"><i id="bbar"></i></div>
-    <div id="blog" class="small muted" style="max-height:200px;overflow:auto;margin-top:10px"></div>
-    <div class="foot"><button class="btn" id="bstop">멈추기</button></div>`);
-  $('#modal').dataset.lock = '1';
-  $('#bstop').onclick = () => ctl.abort();
-  const upd = () => {
-    if (!$('#bmsg')) return; // 창이 닫혀도 일은 계속
-    $('#bmsg').textContent = `${ok + fail}/${items.length} 처리 (성공 ${ok}, 실패 ${fail})`;
-    $('#bbar').style.width = (items.length ? (ok + fail) / items.length * 100 : 100) + '%';
-    $('#blog').innerHTML = log.slice(-30).map(esc).join('<br>');
-  };
-  upd();
-  const worker = async () => {
-    while (i < items.length && !ctl.signal.aborted) {
-      const it = items[i++];
-      try { const m = await fn(it, ctl.signal); ok++; log.push(`${it}번 완료${m ? ' — ' + m : ''}`); }
-      catch (e) { if (e.name === 'AbortError') break; fail++; log.push(`${it}번 실패: ${e.message}`); if (/키|한도|모델/.test(e.message)) ctl.abort(); }
-      upd();
-    }
-  };
-  await Promise.all([worker(), worker()]);
+// 한꺼번에 하는 일은 화면 오른쪽 아래 작은 판에서 뒤로 돌린다 — 그동안 다른 반·학생을 보고 채점해도 된다
+const JOBS = [];
+function jobFor(key) { return JOBS.find(j => j.key === key && !j.done); }
+function renderJobs() {
+  let box = $('#jobs');
+  if (!box) { box = document.createElement('div'); box.id = 'jobs'; document.body.appendChild(box); }
+  box.innerHTML = JOBS.map(j => {
+    const n = j.ok + j.fail, pct = j.total ? Math.round(n / j.total * 100) : 0;
+    const head = j.done ? (j.stopped ? '멈춤' : '끝') + ` — 성공 ${j.ok}, 실패 ${j.fail}`
+      : j.phase || `${n}/${j.total}명 · 성공 ${j.ok}${j.fail ? ', 실패 ' + j.fail : ''}`;
+    return `<div class="job${j.done ? ' done' : ''}">
+      <div class="jh"><span class="spin${j.done ? ' hide' : ''}"></span><b>${esc(j.title)}</b><span class="sp"></span>
+        <button class="ibtn" data-act="jobtoggle" data-j="${j.id}" title="기록 보기">${j.open ? '▾' : '▸'}</button>
+        ${j.done ? `<button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button>`
+          : `<button class="btn sm" data-act="jobstop" data-j="${j.id}">멈추기</button>`}</div>
+      <div class="jm">${esc(head)}${j.where && location.hash !== j.where ? ` · <a href="${j.where}">반 화면</a>` : ''}</div>
+      <div class="prog"><i style="width:${j.done ? 100 : pct}%"></i></div>
+      ${j.open ? `<div class="jl">${j.log.slice(-40).map(esc).join('<br>') || '…'}</div>` : ''}</div>`;
+  }).join('');
+  const jl = box.querySelector('.jl'); if (jl) jl.scrollTop = jl.scrollHeight;
+}
+window.addEventListener('hashchange', () => setTimeout(renderJobs, 0));
+// 보고 있는 화면이 그 반 목록이면 조용히 새로 그린다(입력 중이거나 창이 떠 있으면 건드리지 않음)
+function softRefresh(clsId, no) {
+  const a = document.activeElement;
+  if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
+  if (!$('#modal').classList.contains('hide')) return;
+  const h = location.hash;
+  if (h === '#/k/' + clsId || h === '' || h === '#/' || h.startsWith('#/t/') || h.startsWith('#/c/')) rerender();
+  // 채점 화면: 지금 보고 있는 그 학생의 AI 결과가 막 들어왔을 때만
+  else if (no != null && h === '#/g/' + clsId + '/' + no) rerender();
+}
+async function runBatch(title, items, fn, opt = {}) {
+  const j = { id: uid(), key: opt.key || title, title, total: items.length, ok: 0, fail: 0, log: [], done: false, stopped: false,
+    open: false, ctl: new AbortController(), where: opt.where || '', phase: '' };
+  JOBS.push(j); BUSY++; renderJobs();
+  toast('오른쪽 아래에서 진행합니다. 그동안 다른 화면에서 일해도 됩니다.', 3000);
+  try {
+    if (opt.pre) { j.phase = opt.preMsg || '준비 중…'; renderJobs(); await opt.pre(j); j.phase = ''; renderJobs(); }
+    let i = 0;
+    const worker = async () => {
+      while (i < items.length && !j.ctl.signal.aborted) {
+        const it = items[i++];
+        try { const m = await fn(it, j.ctl.signal); j.ok++; j.log.push(`${it}번 완료${m ? ' — ' + m : ''}`); }
+        catch (e) { if (e.name === 'AbortError') break; j.fail++; j.log.push(`${it}번 실패: ${e.message}`); if (/키|한도|모델/.test(e.message)) j.ctl.abort(); }
+        renderJobs(); if (opt.clsId) softRefresh(opt.clsId, it);
+      }
+    };
+    await Promise.all([worker(), worker()]);
+  } catch (e) { j.log.push('멈춤: ' + e.message); j.ctl.abort(); }
   BUSY--;
-  delete $('#modal').dataset.lock;
-  $('#bmsg').textContent = `${ctl.signal.aborted ? '멈춤 — ' : '끝 — '}성공 ${ok}, 실패 ${fail}`;
-  $('#bstop').textContent = '닫기'; $('#bstop').onclick = () => { closeModal(); rerender(); };
-  save(true);
+  j.done = true; j.stopped = j.ctl.signal.aborted; j.phase = ''; save(true); renderJobs();
+  if (opt.clsId) softRefresh(opt.clsId);
+  toast(`${title}: ${j.stopped ? '멈춤' : '끝'} — 성공 ${j.ok}, 실패 ${j.fail}`, 4000);
+  // 실패 없이 끝난 판은 1분 뒤 저절로 치운다
+  if (!j.fail) setTimeout(() => { const k = JOBS.indexOf(j); if (k >= 0 && !j.open) { JOBS.splice(k, 1); renderJobs(); } }, 60000);
 }
 
 /* ================= 세특 모아보기 ================= */
@@ -1115,6 +1153,8 @@ const HELP = [
     <li><b>이름 칸 가리기</b>: 첫 쪽의 학번·이름 칸을 끌어서 상자로 덮습니다. 스캔마다 위치가 조금 다르니 <b>넉넉하게</b> 그리고 ‹ › 로 다른 번호도 확인하세요. 화면에는 원본이 보이고 AI 로 보낼 때만 검게 칠합니다(채점 화면의 '가림 보기'로 확인).</li></ul>`],
   ['grade', '채점하기', `<ul>
     <li>왼쪽 원본(또는 <b>인식 결과</b> = AI 가 옮겨 적은 답), 오른쪽에 채점 기준 체크와 점수.</li>
+    <li><b>채점 엄격도</b>: 관대하게 · 보통 · 엄격하게 가운데 고르면, 답이 기준에 어느 정도 들어올 때 충족으로 볼지가 바뀝니다(반 화면·채점 기준 화면). 틀린 과학 내용은 어느 쪽이든 미충족입니다.</li>
+    <li><b>뒤에서 진행</b>: 한꺼번에 채점·세특은 오른쪽 아래 작은 판에서 돌아갑니다. 그동안 다른 학생을 직접 채점해도 됩니다. 창을 닫거나 새로 고치면 멈춥니다.</li>
     <li><b>판단 기준</b>: 계획서의 채점 기준은 영역 전체에 대한 말이라, 첫 AI 채점 전에 첫 답안지(이름 가림)를 문항지로 읽어 기준마다 '무엇이 있으면 충족인지'와 문항별 모범 답안 요지를 저절로 만듭니다. 채점 기준 화면에서 읽고 고칠 수 있습니다.</li>
     <li><b>AI 채점 실행</b>: 기준마다 충족/미충족과 근거(학생 답 인용)를 보여 주고, 아직 손대지 않은 학생이면 체크를 미리 채워 둡니다. 최종 점수는 선생님이 확인해 <b>채점 완료</b>를 누릅니다.</li>
     <li>점수 단추(20·18…)로 바로 정하거나, 백지·결석 단추로 특수 점수를 줄 수 있습니다. <b>미제출/미응시</b>는 위쪽 동그라미로 고릅니다.</li>
@@ -1308,23 +1348,32 @@ const ACT = {
     if (!cls.masks.length && !confirm('이름 칸 가리기를 하지 않았습니다. 그래도 답안을 그대로 AI 로 보낼까요?')) return;
     const items = []; for (let no = 1; no <= cls.size; no++) { const s = cls.students[no]; const st = statusOf(cls, no); if (st === '채점 전') items.push(no); }
     if (!items.length) { toast('AI 채점할 학생이 없습니다(모두 채점했거나 답안이 없음).'); return; }
-    if (!hasGuide(task)) {
-      modal(`<h2>채점 준비</h2><p>판단 기준이 비어 있어 먼저 만듭니다. ${esc(cls.name)} 첫 답안지(이름 가림)를 문항지로 읽고, 채점 기준마다 무엇이 있으면 충족인지와 문항별 모범 답안 요지를 정리하는 중…</p><div class="prog"><i style="width:55%"></i></div>`);
-      $('#modal').dataset.lock = '1';
-      const made = await ensureGuide(task, cls);
-      delete $('#modal').dataset.lock;
-      if (made) toast('판단 기준을 만들었습니다. 채점 기준 화면에서 읽고 고칠 수 있습니다.', 3500);
-    }
-    runBatch(`AI 채점 — ${items.length}명`, items, async (no, sig) => { await runAIGrade(task, cls, no, sig); return 'AI ' + aiScoreOf(task, cls.students[no]) + '점'; });
+    if (jobFor('grade:' + cls.id)) { toast('이 반은 이미 AI 채점 중입니다.'); return; }
+    const lv = task.strict || '보통';
+    runBatch(`${cls.name} AI 채점(${lv}) — ${items.length}명`, items,
+      async (no, sig) => { await runAIGrade(task, cls, no, sig); return 'AI ' + aiScoreOf(task, cls.students[no]) + '점'; },
+      { key: 'grade:' + cls.id, clsId: cls.id, where: '#/k/' + cls.id,
+        pre: hasGuide(task) ? null : async j => { if (await ensureGuide(task, cls)) j.log.push('판단 기준을 먼저 만들었습니다(채점 기준 화면에서 고칠 수 있음).'); },
+        preMsg: '판단 기준·모범 답안을 먼저 만드는 중…' });
   },
   batchseteuk(el) {
     const { course, task, cls } = findClass(el.dataset.id); task._subject = course.name;
     if (!App.settings().apiKey) { settingsModal(); return; }
     const items = []; for (let no = 1; no <= cls.size; no++) { const s = cls.students[no]; const st = statusOf(cls, no); if (s && !s.seteuk && (st === '채점 완료' || st === 'AI 채점')) items.push(no); }
     if (!items.length) { toast('세특을 만들 학생이 없습니다(채점된 학생 중 세특이 빈 학생만 만듭니다).'); return; }
-    runBatch(`세특 만들기 — ${items.length}명`, items, async (no, sig) => { const r = await runSeteuk(task, cls, no, sig); return r.b + 'B'; });
+    if (jobFor('seteuk:' + cls.id)) { toast('이 반은 이미 세특을 만드는 중입니다.'); return; }
+    runBatch(`${cls.name} 세특 — ${items.length}명`, items, async (no, sig) => { const r = await runSeteuk(task, cls, no, sig); return r.b + 'B'; },
+      { key: 'seteuk:' + cls.id, clsId: cls.id, where: '#/k/' + cls.id });
   },
   xlsx(el) { xlsxClass(el.dataset.id); },
+  jobstop(el) { const j = JOBS.find(x => x.id === el.dataset.j); if (j) { j.ctl.abort(); j.phase = '멈추는 중…(지금 보낸 학생까지)'; renderJobs(); } },
+  jobclose(el) { const k = JOBS.findIndex(x => x.id === el.dataset.j); if (k >= 0) JOBS.splice(k, 1); renderJobs(); },
+  jobtoggle(el) { const j = JOBS.find(x => x.id === el.dataset.j); if (j) { j.open = !j.open; renderJobs(); } },
+  strict(el) {
+    const { task } = findTask(el.dataset.id); if (!task) return;
+    task.strict = el.dataset.v; save(); rerender();
+    toast(`채점 엄격도: ${el.dataset.v} — 다음 AI 채점부터 적용합니다(이미 한 채점은 그대로).`, 3500);
+  },
   xlsxall(el) { xlsxAll(el.dataset.id, el.dataset.n); },
   // ---- 채점 화면
   vtab(el) { G.tab = el.dataset.t; rerender(); },

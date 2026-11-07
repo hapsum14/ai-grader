@@ -289,14 +289,29 @@ const AI = (() => {
 - 근거(evidence)는 학생 답에서 그대로 인용한다. 답안에 없는 내용을 지어내지 않는다.
 - 판단이 애매하면 reason 에 '애매함'이라고 밝힌다.`;
 
+  // 채점 엄격도: 기준에 '어느 정도 들어오면' 충족으로 볼지. 과학적으로 틀린 답은 어느 쪽이든 미충족.
+  const STRICT = {
+    '관대': `채점 엄격도: 관대하게.
+- 기준이 요구하는 핵심 개념이 방향이 맞게 들어 있으면, 용어가 조금 부정확하거나 이유가 짧고 일부만 있어도 충족으로 본다.
+- 여러 요소를 요구하는 기준은 절반 이상이 맞으면 충족으로 본다.
+- 애매하면 학생에게 유리하게 충족으로 본다. 다만 과학적으로 틀린 내용이 핵심이면 미충족.`,
+    '보통': `채점 엄격도: 보통.
+- 표현이 서툴러도 핵심 개념과 이유가 맞으면 충족, 핵심 이유가 빠졌거나 틀리면 미충족.
+- 여러 요소를 요구하는 기준은 핵심 요소가 대부분 맞아야 충족.`,
+    '엄격': `채점 엄격도: 엄격하게.
+- 기준 문장이 요구하는 요소(개념·이유·근거·예 등)가 모두, 정확한 과학 용어로, 논리적으로 이어져 있어야 충족이다.
+- 일부만 있거나, 이유가 모호하거나, 용어가 부정확하면 미충족.
+- 애매하면 미충족으로 본다.`,
+  };
   async function grade(task, images, signal) {
-    if (isMock()) { await sleep(600, signal); return mockGrade(task); }
+    const lv = STRICT[task.strict] ? task.strict : '보통';
+    if (isMock()) { await sleep(600, signal); return mockGrade(task, lv); }
     const parts = [{ text: taskBrief(task, true) }];
     if (task.answerKey) parts.push({ text: '문항별 모범 답안 요지:\n' + task.answerKey });
     if (task.question) parts.push({ text: '선생님 메모:\n' + task.question });
     images.forEach((b64, i) => { parts.push({ text: `학생 답안 ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
-    parts.push({ text: `채점 기준 ${task.criteria.length}개 항목을 모두 판단해 JSON 으로 답해 주세요.` });
-    return call({ system: GRADE_SYS, parts, schema: GRADE_SCHEMA, temperature: 0.1, signal });
+    parts.push({ text: STRICT[lv] + `\n\n채점 기준 ${task.criteria.length}개 항목을 모두 위 엄격도로 판단해 JSON 으로 답해 주세요.` });
+    return call({ system: GRADE_SYS + '\n- 충족을 가르는 선은 사용자가 준 "채점 엄격도"를 따른다.', parts, schema: GRADE_SCHEMA, temperature: 0.1, signal });
   }
 
   // ---------- 4. 세특(수행평가 한 개 몫) ----------
@@ -350,9 +365,10 @@ const AI = (() => {
       }],
     };
   }
-  function mockGrade(task) {
+  function mockGrade(task, lv) {
+    const cut = { '관대': 0.15, '보통': 0.35, '엄격': 0.6 }[lv] || 0.35;
     const crit = task.criteria.map((c, i) => {
-      const met = Math.random() > 0.35;
+      const met = Math.random() > cut;
       return { index: i + 1, met, points: task.mode === 'points' ? (met ? c.points : 0) : 0, evidence: met ? '(모의) 학생 답 인용' : '', reason: met ? '(모의) 핵심 개념과 이유가 맞음' : '(모의) 이유가 빠짐' };
     });
     return { transcript: '1. (모의 인식 결과) 펩신의 최적 pH 가 다르기 때문이다…\n2. A: 보조 인자, B: 주효소 …', blank: false, unreadable: false, criteria: crit, feedback: '(모의) pH 와 효소 활성의 관계를 정확히 설명했습니다. 보조 인자의 역할을 조금 더 구체적으로 써 보세요.', observation: '(모의) 펩신과 트립신의 최적 pH 차이로 소장에서의 작용을 설명함.' };
