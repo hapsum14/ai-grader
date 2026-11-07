@@ -15,7 +15,9 @@ const AI = (() => {
 
   async function call(opts, retried) {
     const { system, parts, schema, temperature = 0.2, signal } = opts;
-    const { apiKey, model } = cfg();
+    const { apiKey } = cfg();
+    const model = opts._model || cfg().model;
+    const tried = opts._tried || [model];
     if (!apiKey) throw new Error('설정에서 Gemini API 키를 먼저 넣어 주세요.');
     const body = {
       systemInstruction: { parts: [{ text: system }] },
@@ -28,7 +30,7 @@ const AI = (() => {
     const tc = opts.think === 'low' && !opts._noThink ? thinkCfg(model) : null;
     if (tc) body.generationConfig.thinkingConfig = tc;
     const stream = typeof opts.onText === 'function';
-    let wait = 4000;
+    let wait = 2000;
     for (let attempt = 0; ; attempt++) {
       const r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`, {
         method: 'POST', signal,
@@ -66,9 +68,17 @@ const AI = (() => {
       try { msg = (await r.json()).error.message; } catch (e) { msg = r.statusText; }
       // 이 모델이 생각하기 설정을 모르면 설정 없이 다시
       if (r.status === 400 && tc && /think/i.test(msg)) return call(Object.assign({}, opts, { _noThink: true }), retried);
-      if ((r.status === 429 || r.status === 503 || r.status === 500) && attempt < 4) {
-        opts.onWait && opts.onWait(Math.round(wait / 1000));
-        await sleep(wait, signal); wait *= 2; continue;
+      if (r.status === 429 || r.status === 503 || r.status === 500) {
+        // 바쁨(503·500)은 같은 모델로 한 번만 다시, 한도(429)는 곧바로 — 그다음은 다른 모델로 넘어간다(한도·혼잡은 모델마다 따로)
+        const next = r.status === 429 || attempt >= 1 ? fallback(model, tried) : null;
+        if (next) {
+          opts.onWait && opts.onWait(0, describe(next).label);
+          return call(Object.assign({}, opts, { _model: next, _tried: tried.concat(next), _noThink: false }), retried);
+        }
+        if (attempt < 3) {
+          opts.onWait && opts.onWait(Math.round(wait / 1000));
+          await sleep(wait, signal); wait *= 2; continue;
+        }
       }
       if (r.status === 400 && /API key/i.test(msg)) throw new Error('API 키가 올바르지 않습니다. 설정에서 다시 확인해 주세요.');
       if (r.status === 403) throw new Error('이 키로는 Gemini 를 쓸 수 없습니다(403): ' + msg);
@@ -88,8 +98,23 @@ const AI = (() => {
         throw new Error('모델 이름을 찾을 수 없습니다(' + model + '). 설정에서 "키 확인·최신 목록"을 눌러 모델을 다시 고르세요.');
       }
       if (r.status === 429) throw new Error('사용량 한도에 걸렸습니다. 잠시 뒤 다시 시도하거나 다른 모델을 고르세요.');
+      if (r.status === 503 || r.status === 500) throw new Error('Gemini 서버가 지금 몹시 바쁩니다(여러 모델로 시도함). 1~2분 뒤 다시 눌러 주세요.');
       throw new Error('AI 호출 실패(' + r.status + '): ' + msg);
     }
+  }
+  // 바쁠 때 넘어갈 모델: 같은 급의 다른 판 → 더 가벼운 급. Pro 는 느려서 처음부터 Pro 를 고른 경우에만.
+  function fallback(model, tried) {
+    let ids = [];
+    try { ids = JSON.parse(localStorage.getItem('aigrader-models') || '[]'); } catch (e) {}
+    if (!ids.length) ids = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
+    const cur = describe(model);
+    const plain = /^gemini-(\d+(\.\d+)?-(pro|flash|flash-lite)(-\d{3})?|(pro|flash|flash-lite)-latest)$/;
+    const ok = d => !tried.includes(d.id) && plain.test(d.id) && (d.latest || (d.ver >= 2.5 && !d.preview)) &&
+      (d.tier === 'flash' || d.tier === 'flash-lite' || (d.tier === 'pro' && cur.tier === 'pro'));
+    const list = sortModels(ids).filter(ok);
+    const rank = d => (d.tier === cur.tier ? 0 : d.tier === 'flash' ? 1 : 2);
+    list.sort((a, b) => rank(a) - rank(b));
+    return tried.length > 3 ? null : (list[0] || {}).id || null;
   }
   function sleep(ms, signal) {
     return new Promise((res, rej) => {
