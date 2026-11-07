@@ -177,6 +177,8 @@ function seteukInfo(task, s) {
     const ok = s.touched ? !!s.checks[i] : !!(s.ai && (s.ai.criteria.find(x => x.index === i + 1) || {}).met);
     (ok ? met : unmet).push(c.text);
   });
+  const ratio = task.criteria.length ? met.length / task.criteria.length : 0;
+  L.push(`성취 수준: ${s.special != null ? '하(특수 상황)' : ratio >= 0.8 ? '상' : ratio >= 0.5 ? '중' : '하'} (채점 기준 ${task.criteria.length}개 중 ${met.length}개 충족)`);
   L.push('충족한 채점 기준: ' + (met.join(' / ') || '없음'));
   L.push('충족하지 못한 채점 기준: ' + (unmet.join(' / ') || '없음'));
   if (s.ai) {
@@ -189,6 +191,53 @@ function seteukInfo(task, s) {
   if (s.memo) L.push('교사 관찰 메모(중요): ' + s.memo);
   return L.join('\n');
 }
+// 문체 본보기: 선생님이 예전에 쓴 세특 엑셀에서 활동 부분('○○ 수행평가에서는 …' 1~2문장)만 뽑아 이 브라우저에 둔다
+const Style = {
+  KEY: 'aigrader-style',
+  get() { try { return JSON.parse(localStorage.getItem(this.KEY) || '[]'); } catch (e) { return []; } },
+  set(a) { try { localStorage.setItem(this.KEY, JSON.stringify(a)); return true; } catch (e) { return false; } },
+  // 세특 한 칸 → 활동 부분 조각들(첫 문장 총평·끝 정리 문장은 뺀다)
+  segments(text) {
+    const ss = String(text).replace(/\s+/g, ' ').trim().split(/(?<=[.])\s+/).filter(Boolean);
+    const out = [];
+    for (let i = 1; i < ss.length - 1; i++) {
+      if (!/에서는/.test(ss[i].slice(0, 45))) continue;
+      let seg = ss[i];
+      const nx = ss[i + 1];
+      if (i + 1 < ss.length - 1 && !/에서는/.test(nx.slice(0, 45)) && !/^(이처럼|이를 통해|이러한)/.test(nx) && App.bytes(seg + ' ' + nx) <= 480) seg += ' ' + nx;
+      const b = App.bytes(seg);
+      if (b >= 120 && b <= 520) out.push(seg);
+    }
+    return out;
+  },
+  async fromFiles(files) {
+    const segs = [];
+    let cells = 0;
+    for (const f of files) {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+      for (const name of wb.SheetNames) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false });
+        for (const r of rows) for (const c of r || []) {
+          if (typeof c !== 'string' || c.length < 150 || !/(함|임|보임|돋보임|뛰어남)\./.test(c)) continue;
+          cells++; segs.push(...this.segments(c));
+        }
+      }
+    }
+    const seen = new Set(), uniq = [];
+    for (const s of segs) { const k = s.slice(0, 30); if (!seen.has(k)) { seen.add(k); uniq.push(s); } }
+    return { cells, segs: uniq.slice(0, 400) };
+  },
+  // 이 수행평가와 낱말이 많이 겹치는 본보기 n개(겹침이 같으면 고르게 섞음)
+  pick(task, n = 4) {
+    const all = this.get(); if (!all.length) return [];
+    const words = new Set((task.name + ' ' + (task.assignment || '') + ' ' + task.criteria.map(c => c.text).join(' '))
+      .match(/[가-힣]{2,}/g) || []);
+    const stop = new Set(['하였는가', '있는가', '서술하였는가', '제시하였는가', '이해하고', '대한', '통해', '관점에서', '수행평가']);
+    const sc = all.map(t => ({ t, v: [...words].filter(w => !stop.has(w) && t.includes(w)).length + Math.random() * 0.5 }));
+    sc.sort((a, b) => b.v - a.v);
+    return sc.slice(0, n).map(x => x.t);
+  },
+};
 const BRANDS = ['구글', '네이버', '다음카페', '유튜브', '유튜버', '카카오톡', '카톡', '인스타그램', '페이스북', '패들렛', '띵커벨', '미리캔버스', '캔바', '챗GPT', 'ChatGPT', 'GPT', '제미나이', 'Gemini', '노션', '위키백과', '나무위키', 'TED'];
 function lint(t) {
   const w = [];
@@ -981,9 +1030,10 @@ async function runSeteuk(task, cls, no, signal) {
   const s = stu(cls, no);
   const set = App.settings(); const rng = [set.byteMin, set.byteMax];
   const info = seteukInfo(task, s);
+  const styles = Style.pick(task);
   let best = null, prev = null;
   for (let k = 0; k < 3; k++) {
-    const r = await AI.seteuk(task, info, rng, prev, signal);
+    const r = await AI.seteuk(task, info, rng, prev, signal, styles);
     const text = String(r.text || '').replace(/\s+/g, ' ').trim();
     const b = App.bytes(text);
     const dist = b > rng[1] ? b - rng[1] : b < rng[0] ? rng[0] - b : 0;
@@ -1097,6 +1147,12 @@ function settingsModal() {
       <div><label class="f">세특 최소 바이트</label><input class="in num" id="smin" type="number" value="${s.byteMin}"></div>
       <div><label class="f">세특 최대 바이트</label><input class="in num" id="smax" type="number" value="${s.byteMax}"></div>
     </div>
+    <label class="f">세특 문체 본보기</label>
+    <div class="row"><button class="btn sm" id="ssty">${ICON.doc}기존 세특 엑셀 불러오기</button><button class="btn sm ghost" id="sstyclr">지우기</button>
+      <span class="small muted" id="sstymsg">${Style.get().length ? `본보기 ${Style.get().length}개 저장됨` : '아직 없음'}</span></div>
+    <input type="file" id="sstyfile" multiple accept=".xlsx,.xls,.csv" class="hide">
+    <p class="small muted" style="margin:6px 0 0">예전에 쓴 세특 엑셀(여러 개 가능)에서 '○○ 수행평가에서는 …'처럼 활동을 쓴 1~2문장만 뽑아 이 브라우저에 둡니다. 세특을 쓸 때 이 수행평가와 가까운 본보기 4개를 AI 에게 보여 주어 문장 구조·길이·서술어를 맞춥니다(내용은 가져오지 않음). 이름·번호 칸은 읽지 않습니다.</p>
+    <details id="sstyview" style="margin-top:6px"><summary class="small muted" style="cursor:pointer">저장된 본보기 보기</summary><div class="small" id="sstylist" style="max-height:180px;overflow:auto;margin-top:6px"></div></details>
     <div class="note" style="margin-top:14px"><b>개인정보 안내</b><br>무료 키(결제 미등록)로 보낸 내용은 Google 이 서비스 개선에 쓸 수 있습니다. 반드시 <b>이름 칸 가리기</b>를 하고 보내세요. 학교 지침상 외부 AI 사용 허가가 필요한지도 확인하세요.</div>
     <div class="foot"><button class="btn" data-act="close">닫기</button><button class="btn primary" id="ssave">저장</button></div>`);
   const note = () => { const d = AI.describe($('#smodel').value); $('#stestmsg').innerHTML = d.note ? `${esc(d.label)}: ${esc(d.note)}` : ''; };
@@ -1120,6 +1176,23 @@ function settingsModal() {
     } catch (e) { $('#stestmsg').innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
   };
   $('#stest').onclick = () => test(false);
+  const styList = () => { const a = Style.get(); $('#sstymsg').textContent = a.length ? `본보기 ${a.length}개 저장됨` : '아직 없음';
+    $('#sstylist').innerHTML = a.slice(0, 60).map(t => `<p style="margin:0 0 6px">${esc(t)}</p>`).join('') + (a.length > 60 ? `<p class="faint">… 외 ${a.length - 60}개</p>` : ''); };
+  styList();
+  $('#ssty').onclick = () => $('#sstyfile').click();
+  $('#sstyfile').onchange = async e => {
+    const fs = [...e.target.files]; if (!fs.length) return;
+    $('#sstymsg').textContent = '읽는 중…';
+    try {
+      const r = await Style.fromFiles(fs);
+      if (!r.segs.length) { $('#sstymsg').textContent = `세특 칸 ${r.cells}개에서 '…에서는'으로 시작하는 활동 문장을 찾지 못했습니다.`; return; }
+      const merged = [...new Set(r.segs.concat(Style.get()))].slice(0, 400);
+      if (!Style.set(merged)) { $('#sstymsg').textContent = '브라우저 저장 공간이 부족합니다.'; return; }
+      styList(); $('#sstymsg').textContent = `세특 ${r.cells}칸에서 활동 문장 ${r.segs.length}개를 뽑았습니다 · 모두 ${merged.length}개`;
+    } catch (err) { $('#sstymsg').textContent = '읽지 못했습니다: ' + err.message; }
+    e.target.value = '';
+  };
+  $('#sstyclr').onclick = () => { if (Style.get().length && confirm('저장된 문체 본보기를 모두 지울까요?')) { localStorage.removeItem(Style.KEY); styList(); } };
   $('#skey').addEventListener('change', () => test(true));
   $('#ssave').onclick = () => {
     App.saveSettings({ apiKey: $('#skey').value.trim(), model: $('#smodel').value || 'gemini-flash-latest', byteMin: Number($('#smin').value) || 250, byteMax: Number($('#smax').value) || 300 });
@@ -1153,6 +1226,7 @@ const HELP = [
     <li><b>이름 칸 가리기</b>: 첫 쪽의 학번·이름 칸을 끌어서 상자로 덮습니다. 스캔마다 위치가 조금 다르니 <b>넉넉하게</b> 그리고 ‹ › 로 다른 번호도 확인하세요. 화면에는 원본이 보이고 AI 로 보낼 때만 검게 칠합니다(채점 화면의 '가림 보기'로 확인).</li></ul>`],
   ['grade', '채점하기', `<ul>
     <li>왼쪽 원본(또는 <b>인식 결과</b> = AI 가 옮겨 적은 답), 오른쪽에 채점 기준 체크와 점수.</li>
+    <li><b>세특 문장 구조</b>: '○○ 수행평가에서는 …함. (특히/또한) …함.' 두 문장 틀로, 성취 수준(상·중·하)에 맞는 서술어를 씁니다. 설정 → '기존 세특 엑셀 불러오기'로 예전에 쓴 세특을 넣으면 활동 문장을 본보기로 삼아 문체를 맞춥니다.</li>
     <li><b>채점 엄격도</b>: 관대하게 · 보통 · 엄격하게 가운데 고르면, 답이 기준에 어느 정도 들어올 때 충족으로 볼지가 바뀝니다(반 화면·채점 기준 화면). 틀린 과학 내용은 어느 쪽이든 미충족입니다.</li>
     <li><b>뒤에서 진행</b>: 한꺼번에 채점·세특은 오른쪽 아래 작은 판에서 돌아갑니다. 그동안 다른 학생을 직접 채점해도 됩니다. 창을 닫거나 새로 고치면 멈춥니다.</li>
     <li><b>판단 기준</b>: 계획서의 채점 기준은 영역 전체에 대한 말이라, 첫 AI 채점 전에 첫 답안지(이름 가림)를 문항지로 읽어 기준마다 '무엇이 있으면 충족인지'와 문항별 모범 답안 요지를 저절로 만듭니다. 채점 기준 화면에서 읽고 고칠 수 있습니다.</li>
