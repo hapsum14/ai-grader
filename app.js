@@ -413,7 +413,7 @@ async function startPlan(src) {
   const tick = () => {
     const sec = Math.round((Date.now() - t0) / 1000);
     const el = $('#psub'); if (!el) return;
-    el.textContent = `${sec}초 지남${got ? ` · 받은 글 ${got.toLocaleString()}자` : ''}${phase}`;
+    el.textContent = `${sec}초 지남${got ? ` · 받은 글 ${got.toLocaleString()}자` : sec >= 4 && !phase ? ' · AI 가 읽고 생각하는 중(답이 오기 시작하면 글자 수가 보임)' : ''}${phase}`;
     // 받은 양에 맞춰 막대를 채운다(끝을 모르니 천천히 90% 까지)
     const bar = $('.prog i'); if (bar) bar.style.width = Math.min(90, 35 + (got ? 20 + got / 60 : sec * 1.2)) + '%';
   };
@@ -426,7 +426,7 @@ async function startPlan(src) {
       ? `글 ${full.length.toLocaleString()}자를 읽었습니다. AI 가 수행평가 채점 기준을 정리하는 중…`
       : `글 ${full.length.toLocaleString()}자 가운데 수행평가 부분 <b>${focus.length.toLocaleString()}자</b>만 골라 AI 가 채점 기준을 정리하는 중…`;
     timer = setInterval(tick, 500); tick();
-    const r = await AI.extractPlan(send, n => { got = n; phase = ''; }, (s, alt) => { phase = alt ? ` · 서버가 바빠 ${alt} 로 바꿔 시도` : ` · 서버가 바빠 ${s}초 뒤 다시 시도`; });
+    const r = await AI.extractPlan(send, n => { got = n; phase = ''; }, (s, alt, why) => { got = 0; phase = alt ? (why === 'slow' ? ` · 답이 늦어 더 빠른 ${alt} 로 바꿈` : ` · 서버가 바빠 ${alt} 로 바꿔 시도`) : ` · 서버가 바빠 ${s}초 뒤 다시 시도`; });
     clearInterval(timer);
     const c = {
       id: uid(), name: r.subject || (src.file ? src.file.name : '새 과목'), grade: r.grade || '', semester: r.semester || '', year: r.school_year || '',

@@ -26,17 +26,38 @@ const AI = (() => {
     };
     // Gemini 3 이상(·항상 최신)은 기본 temperature 1.0 을 권장 — 낮추면 답이 되풀이될 수 있어 2.x 에만 넣는다
     if (modelVersion(model) < 3) body.generationConfig.temperature = temperature;
-    // 생각하기(thinking)를 줄여 빠르게: 정리·옮겨 쓰기처럼 단순한 일에만(opts.think = 'low')
-    const tc = opts.think === 'low' && !opts._noThink ? thinkCfg(model) : null;
+    // 생각하기(thinking)를 줄여 빠르게: 정리·옮겨 쓰기처럼 단순한 일에만(opts.think = 'min' | 'low')
+    const tc = opts.think && !opts._noThink ? thinkCfg(model, opts.think) : null;
     if (tc) body.generationConfig.thinkingConfig = tc;
     const stream = typeof opts.onText === 'function';
     let wait = 2000;
     for (let attempt = 0; ; attempt++) {
-      const r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`, {
-        method: 'POST', signal,
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
-        body: JSON.stringify(body),
-      });
+      // opts.firstMs 안에 답의 첫 글자가 오지 않으면(생각하기가 길거나 줄이 밀림) 끊고 더 빠른 모델로
+      const ac = new AbortController();
+      const onAbort = () => ac.abort();
+      if (signal) { if (signal.aborted) ac.abort(); else signal.addEventListener('abort', onAbort); }
+      let slow = false, timer = null;
+      if (opts.firstMs) timer = setTimeout(() => { slow = true; ac.abort(); }, opts.firstMs);
+      const done = () => { clearTimeout(timer); timer = null; };
+      const slowNext = () => {
+        const next = fallback(model, tried, true);
+        if (!next) return null;
+        opts.onWait && opts.onWait(0, describe(next).label, 'slow');
+        return call(Object.assign({}, opts, { _model: next, _tried: tried.concat(next), _noThink: false, think: opts.think === 'low' ? 'min' : opts.think }), retried);
+      };
+      let r;
+      try {
+        r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`, {
+          method: 'POST', signal: ac.signal,
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        done(); signal && signal.removeEventListener('abort', onAbort);
+        if (slow) { const n = slowNext(); if (n) return n; throw new Error('AI 가 너무 오래 답하지 않습니다. 잠시 뒤 다시 해 보세요.'); }
+        throw e;
+      }
+      if (!stream || !r.ok) { done(); signal && signal.removeEventListener('abort', onAbort); }
       if (r.ok) {
         let txt = '', why = '';
         const take = j => {
@@ -49,16 +70,24 @@ const AI = (() => {
           const rd = r.body.getReader(), dec = new TextDecoder();
           let buf = '';
           for (;;) {
-            const { value, done } = await rd.read();
-            if (done) break;
+            let chunk;
+            try { chunk = await rd.read(); }
+            catch (e) {
+              done(); signal && signal.removeEventListener('abort', onAbort);
+              if (slow) { const n = slowNext(); if (n) return n; throw new Error('AI 가 너무 오래 답하지 않습니다. 잠시 뒤 다시 해 보세요.'); }
+              throw e;
+            }
+            const { value } = chunk;
+            if (chunk.done) break;
             buf += dec.decode(value, { stream: true });
             let k;
             while ((k = buf.indexOf('\n')) >= 0) {
               const line = buf.slice(0, k).trim(); buf = buf.slice(k + 1);
-              if (line.startsWith('data:')) { try { take(JSON.parse(line.slice(5))); opts.onText(txt.length); } catch (e) {} }
+              if (line.startsWith('data:')) { try { take(JSON.parse(line.slice(5))); if (txt) done(); opts.onText(txt.length); } catch (e) {} }
             }
           }
           if (buf.trim().startsWith('data:')) { try { take(JSON.parse(buf.trim().slice(5))); } catch (e) {} }
+          done(); signal && signal.removeEventListener('abort', onAbort);
         } else take(await r.json());
         if (!txt) throw new Error('AI 가 답을 주지 않았습니다(' + (why || '빈 응답') + ').');
         try { return JSON.parse(txt); }
@@ -67,7 +96,11 @@ const AI = (() => {
       let msg = '';
       try { msg = (await r.json()).error.message; } catch (e) { msg = r.statusText; }
       // 이 모델이 생각하기 설정을 모르면 설정 없이 다시
-      if (r.status === 400 && tc && /think/i.test(msg)) return call(Object.assign({}, opts, { _noThink: true }), retried);
+      if (r.status === 400 && tc && /think/i.test(msg)) {
+        // 'minimal' 을 모르는 모델이면 'low' 로, 그것도 모르면 설정 없이
+        if (opts.think === 'min' && tc.thinkingLevel === 'minimal') return call(Object.assign({}, opts, { think: 'low' }), retried);
+        return call(Object.assign({}, opts, { _noThink: true }), retried);
+      }
       if (r.status === 429 || r.status === 503 || r.status === 500) {
         // 바쁨(503·500)은 같은 모델로 한 번만 다시, 한도(429)는 곧바로 — 그다음은 다른 모델로 넘어간다(한도·혼잡은 모델마다 따로)
         const next = r.status === 429 || attempt >= 1 ? fallback(model, tried) : null;
@@ -103,7 +136,7 @@ const AI = (() => {
     }
   }
   // 바쁠 때 넘어갈 모델: 같은 급의 다른 판 → 더 가벼운 급. Pro 는 느려서 처음부터 Pro 를 고른 경우에만.
-  function fallback(model, tried) {
+  function fallback(model, tried, fast) {
     let ids = [];
     try { ids = JSON.parse(localStorage.getItem('aigrader-models') || '[]'); } catch (e) {}
     if (!ids.length) ids = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
@@ -112,7 +145,9 @@ const AI = (() => {
     const ok = d => !tried.includes(d.id) && plain.test(d.id) && (d.latest || (d.ver >= 2.5 && !d.preview)) &&
       (d.tier === 'flash' || d.tier === 'flash-lite' || (d.tier === 'pro' && cur.tier === 'pro'));
     const list = sortModels(ids).filter(ok);
-    const rank = d => (d.tier === cur.tier ? 0 : d.tier === 'flash' ? 1 : 2);
+    // fast: 답이 늦을 때 — 생각하기가 짧은 Flash-Lite 를 먼저
+    const rank = fast ? (d => (d.tier === 'flash-lite' ? 0 : d.tier === 'flash' ? 1 : 2))
+      : (d => (d.tier === cur.tier ? 0 : d.tier === 'flash' ? 1 : 2));
     list.sort((a, b) => rank(a) - rank(b));
     return tried.length > 3 ? null : (list[0] || {}).id || null;
   }
@@ -144,9 +179,9 @@ const AI = (() => {
   function recommend(list) {
     return (list.find(m => m.latest && m.tier === 'flash') || list.find(m => !m.latest && m.tier === 'flash') || list.find(m => m.tier === 'pro') || list[0] || {}).id;
   }
-  function thinkCfg(id) {
+  function thinkCfg(id, level) {
     const d = describe(id);
-    if (d.latest || d.ver >= 3) return { thinkingLevel: 'low' };
+    if (d.latest || d.ver >= 3) return { thinkingLevel: level === 'min' && d.tier !== 'pro' ? 'minimal' : 'low' };
     if (d.ver >= 2.5) return { thinkingBudget: d.tier === 'pro' ? 128 : 0 }; // 2.5 Pro 는 끌 수 없어 최소값
     return null;
   }
@@ -206,7 +241,7 @@ const AI = (() => {
     if (pdf && (!text || text.trim().length < 300)) parts.push({ inline_data: { mime_type: mime || 'application/pdf', data: pdf } });
     else if (text) parts.push({ text: '평가계획서(수행평가 부분):\n' + text.slice(0, 60000) });
     parts.push({ text: '위 평가계획서에서 수행평가 영역별 채점 기준을 JSON 으로 뽑아 주세요.' });
-    return call({ system: PLAN_SYS, parts, schema: PLAN_SCHEMA, temperature: 0.1, think: 'low', onText, onWait });
+    return call({ system: PLAN_SYS, parts, schema: PLAN_SCHEMA, temperature: 0.1, think: 'min', firstMs: 25000, onText, onWait });
   }
 
   // ---------- 2. 채점 지침 다듬기(문항지를 보고) ----------
