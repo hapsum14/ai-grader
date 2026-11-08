@@ -568,7 +568,7 @@ function renderSide() {
 }
 function scope(parts) {
   $('#scope').innerHTML = parts.length
-    ? parts.map((p, i) => i === parts.length - 1 ? `${esc(p[0])}` : `<a href="${p[1] || '#/'}">${esc(p[0])}</a> <span>›</span> `).join('')
+    ? parts.map((p, i) => `<span class="cr${i < parts.length - 2 ? ' far' : ''}">${i === parts.length - 1 ? `<b>${esc(p[0])}</b>` : `<a href="${p[1] || '#/'}">${esc(p[0])}</a><span class="sep">›</span>`}</span>`).join('')
     : `처음 화면`;
 }
 const crumb = scope; // 예전 이름
