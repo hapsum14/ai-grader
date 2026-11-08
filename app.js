@@ -254,10 +254,12 @@ const Style = {
   },
 };
 const BRANDS = ['구글', '네이버', '다음카페', '유튜브', '유튜버', '카카오톡', '카톡', '인스타그램', '페이스북', '패들렛', '띵커벨', '미리캔버스', '캔바', '챗GPT', 'ChatGPT', 'GPT', '제미나이', 'Gemini', '노션', '위키백과', '나무위키', 'TED'];
-function lint(t) {
+function lint(t, task) {
   const w = [];
   const fw = t.match(/나의|나만의|내가|대회/g); if (fw) w.push('쓰면 안 되는 말: ' + [...new Set(fw)].join(', '));
   if (/수행평가/.test(t)) w.push("'수행평가' 대신 '~활동에서는', '~에서는'으로");
+  task = task || (gctx && gctx.task);
+  if (task && /논술|서술|지필/.test(task.method || '')) { const ex = t.match(/실험을\s?(설계|수행|진행|실시)함|측정함|측정하여|관찰함|관찰하여|실험으로 확인/g); if (ex) w.push('답안지에 쓴 활동인데 실제 실험처럼 읽힘: ' + [...new Set(ex)].join(', ') + " → '설계안을 서술함', '방법을 제시함'처럼"); }
   const neg = t.match(/미흡|부족|못하|못함|어려움|어려워|실수|오류가|아쉬|소홀|부진|틀린|틀렸/g); if (neg) w.push('부정적인 말: ' + [...new Set(neg)].join(', ') + ' → 해낸 것만');
   const bad = t.match(/[^\p{L}\p{N}\s.,\-]/gu); if (bad) w.push('마침표·쉼표·하이픈 밖의 특수문자: ' + [...new Set(bad)].join(' '));
   const inner = t.match(/(느낌|느꼈음|생각함|깨달음|알게 됨|알게 되었음|배움|다짐함|인식함|이해함)(?=\s*[.,]|\s*$)/g);
@@ -562,7 +564,7 @@ function vTask(tid) {
     ${t.levels.length ? `<details style="margin-top:10px"><summary class="small muted" style="cursor:pointer">성취수준 A~E 보기</summary><div class="small" style="margin-top:6px">${t.levels.map(l => `<div style="margin-bottom:4px"><b>${esc(l.grade)}</b> ${esc(l.text)}</div>`).join('')}</div></details>` : ''}
   </div>
   <div class="card">
-    <div class="sec-h">${ICON.check}채점 기준 항목${t.criteria.some(c => c.qnos) && !t.mapOk ? '<span class="pill ai" title="AI 가 제안한 문항 대응 — 확인해 주세요">문항 대응 확인 필요</span>' : ''}<span class="sp"></span>
+    <div class="sec-h">${ICON.check}채점 기준 항목<button class="btn sm" data-act="mapview" data-id="${t.id}" style="margin-left:8px">${ICON.img}시험지 보며 문항 맞추기</button><span class="sp"></span>
       <select class="in" style="width:auto" data-f="mode"><option value="count" ${t.mode !== 'points' ? 'selected' : ''}>충족한 항목 수로 점수</option><option value="points" ${t.mode === 'points' ? 'selected' : ''}>항목별 배점 합산</option></select></div>
     ${crit || '<p class="muted">항목이 없습니다.</p>'}
     <div class="row" style="margin-top:10px"><button class="btn sm" data-act="addcrit">+ 항목 추가</button>
@@ -587,7 +589,7 @@ function bindTaskInputs(t) {
       const num = x => (x === '' ? 0 : Number(x));
       if (f === 'crit.text') t.criteria[i].text = v;
       else if (f === 'crit.guide') t.criteria[i].guide = v;
-      else if (f === 'crit.qnos') { t.criteria[i].qnos = v.replace(/번/g, '').trim(); t.criteria[i].qnosByTeacher = true; t.mapOk = true; }
+      else if (f === 'crit.qnos') { t.criteria[i].qnos = v.replace(/번/g, '').trim(); t.criteria[i].qnosByTeacher = true; t.mapAt = t.mapAt || Date.now(); }
       else if (f === 'crit.points') t.criteria[i].points = num(v);
       else if (f === 'scale.count') t.scale[i].count = num(v);
       else if (f === 'scale.score') t.scale[i].score = num(v);
@@ -834,6 +836,7 @@ function vClass(kid) {
     <details class="menu"><summary class="btn" title="더 보기">${ic('more')}</summary><div class="mlist">
       <a href="#/k/${cls.id}/pages">${ICON.img}답안 나누기 · 이름 가리기</a>
       <a href="#/t/${task.id}">${ic('task')}채점 기준</a>
+      <button data-act="mapview" data-id="${task.id}">${ICON.img}시험지 보며 문항 맞추기</button>
       <button data-act="regrade" data-id="${cls.id}">${ic('bot')}AI 채점 다시…</button>
       <button data-act="reseteuk" data-id="${cls.id}">${ICON.wand}세특 다시 쓰기…</button>
       <button data-act="copyall" data-id="${cls.id}">${ic('copy')}세특 모두 복사</button>
@@ -1091,40 +1094,72 @@ function strictSeg(task) {
   return `<span class="seg" title="AI 채점 기준: ${esc(STRICT_NOTE[v])}">${['관대', '보통', '엄격'].map(x =>
     `<button class="${x === v ? 'on' : ''}" data-act="strict" data-id="${task.id}" data-v="${x}" title="${esc(STRICT_NOTE[x])}">${x}</button>`).join('')}</span>`;
 }
+// 학생 번호 고르기 창(다시 채점·다시 쓰기)
+function pickModal(o) {
+  const sel = o.sel;
+  modal(`<h2>${esc(o.title)}</h2><p class="small muted" style="margin:0 0 10px">${esc(o.note)}</p>
+    <div class="row" style="gap:6px;margin-bottom:8px">${o.quick.map((q, i) => `<button class="btn sm" data-q="${i}">${esc(q[0])}</button>`).join('')}<button class="btn sm" data-q="all">모두</button><button class="btn sm ghost" data-q="none">모두 해제</button></div>
+    <div class="pick">${o.nos.map(no => { const t = o.tag(no); return `<button class="pk" data-no="${no}"><b>${no}</b>${t ? `<small>${esc(t)}</small>` : ''}</button>`; }).join('')}</div>
+    ${o.extra || ''}
+    <div class="foot"><button class="btn" data-act="close">취소</button><button class="btn primary" id="pkgo"></button></div>`);
+  const paint = () => { $$('#mbox .pk').forEach(b => b.classList.toggle('on', sel.has(Number(b.dataset.no)))); const g = $('#pkgo'); g.innerHTML = `${o.go} · ${sel.size}명`; g.disabled = !sel.size; };
+  $$('#mbox .pk').forEach(b => b.onclick = () => { const n = Number(b.dataset.no); sel.has(n) ? sel.delete(n) : sel.add(n); paint(); });
+  $$('#mbox [data-q]').forEach(b => b.onclick = () => {
+    const q = b.dataset.q; sel.clear();
+    if (q === 'all') o.nos.forEach(n => sel.add(n)); else if (q !== 'none') o.nos.filter(o.quick[Number(q)][1]).forEach(n => sel.add(n));
+    paint();
+  });
+  $('#pkgo').onclick = () => { const items = o.nos.filter(n => sel.has(n)); closeModal(true); if (items.length) o.run(items); };
+  paint();
+}
 function hasGuide(task) { return task.criteria.some(c => (c.guide || '').trim()) || !!(task.answerKey || '').trim(); }
-async function makeGuideFor(task, cls) {
+async function makeGuideFor(task, cls, mapOnly) {
   const k = cls && cls.subs.length ? cls : task.classes.find(x => x.subs.length);
   const imgs = k ? await aiImages(k, k.subs[0]) : [];
   const r = await AI.makeGuide(task, imgs);
   let n = 0;
-  (r.criteria || []).forEach(c => { const x = task.criteria[Number(c.index) - 1]; if (!x) return; if (c.guide) { x.guide = c.guide; n++; } if (c.questions && !x.qnosByTeacher) x.qnos = String(c.questions).replace(/번/g, '').trim(); });
-  task.mapOk = false;
-  if (r.answerKey) task.answerKey = r.answerKey;
-  task.guideAt = Date.now(); save();
+  (r.criteria || []).forEach(c => {
+    const x = task.criteria[Number(c.index) - 1]; if (!x) return;
+    if (c.guide && !mapOnly) { x.guide = c.guide; n++; }
+    if (c.questions && !x.qnosByTeacher) x.qnos = String(c.questions).replace(/번/g, '').trim();
+  });
+  if (r.answerKey && !mapOnly) task.answerKey = r.answerKey;
+  task.mapAt = Date.now(); if (!mapOnly) task.guideAt = Date.now(); save();
   return n;
 }
-// 채점 기준 ↔ 시험지 문항 대응: AI 가 제안하고 선생님이 확인한다(기준 1 이 문항 1 이라는 보장은 없음)
-function mapModal(task, then) {
+// 판단 기준·문항 대응이 아직 없으면 AI 채점 전에 저절로 만든다
+function needPrep(task) { return task.criteria.length && (!hasGuide(task) || (!task.criteria.some(c => c.qnos) && !task.mapAt)); }
+async function prepGrade(task, cls, then) {
+  const full = !hasGuide(task);
+  modal(`<h2>채점 준비</h2><p>첫 답안지(이름 가림)로 ${full ? '<b>판단 기준</b>과 ' : ''}<b>문항 대응</b>을 만드는 중…</p><div class="prog"><i style="width:60%"></i></div>`);
+  $('#modal').dataset.lock = '1';
+  try { await makeGuideFor(task, cls, !full); task.mapAt = task.mapAt || Date.now(); }
+  catch (e) { task.mapAt = Date.now(); toast('문항 대응을 만들지 못해 내용으로 판단합니다: ' + e.message, 4000); }
+  delete $('#modal').dataset.lock; closeModal(true);
+  then();
+}
+// 채점 기준 ↔ 시험지 문항: 시험지(첫 답안지)를 보면서 확인·수정
+async function mapModal(task) {
+  const k = task.classes.find(x => x.subs.length);
+  const pages = k ? k.subs[0].pages.map(pi => k.pages[pi]) : [];
+  let pg = 0;
   modal(`<h2>채점 기준과 문항 맞추기</h2>
-    <p class="small muted">기준마다 판단할 <b>시험지 문항 번호</b>를 확인하세요. 기준 번호와 문항 번호는 다를 수 있어요. 비워 두면 AI 가 내용으로 찾습니다.</p>
-    <div class="maptb">${task.criteria.map((c, i) => `<div class="mr"><span class="mi">${i + 1}</span><span class="mt">${esc(c.text)}</span>
-      <label class="mq"><input class="in" data-mi="${i}" value="${esc(c.qnos || '')}" placeholder="예: 3">번</label></div>`).join('')}</div>
-    <div class="foot"><button class="btn" data-act="close">취소</button><button class="btn primary" id="mapgo">${ic('check')}확인하고 채점</button></div>`);
+    <div class="mapwrap">
+      <div class="mapsheet">${pages.length ? `<div class="row" style="gap:4px;margin-bottom:6px">${pages.map((_, j) => `<button class="chip ${j ? '' : 'on'}" data-pg="${j}">${j + 1}쪽</button>`).join('')}<span class="small muted" style="margin-left:6px">${esc(k.name)} ${k.subs[0].no}번 답안지</span></div>
+        <div class="mapimg"><img id="mapimg" alt=""></div>` : '<p class="muted small">반을 추가하면 시험지를 함께 볼 수 있어요.</p>'}</div>
+      <div class="mapright">
+        <p class="small muted" style="margin:0 0 6px">기준마다 판단할 <b>문항 번호</b>. 기준 번호와 다를 수 있어요. 비우면 AI 가 내용으로 찾아요.</p>
+        <div class="maptb">${task.criteria.map((c, i) => `<div class="mr"><span class="mi">${i + 1}</span><span class="mt">${esc(c.text)}</span>
+          <label class="mq"><input class="in" data-mi="${i}" value="${esc(c.qnos || '')}" placeholder="예: 3">번</label></div>`).join('')}</div>
+      </div>
+    </div>
+    <div class="foot"><button class="btn" data-act="close">취소</button><button class="btn primary" id="mapgo">${ic('check')}저장</button></div>`, true);
+  const show = async j => { pg = j; $$('#mbox [data-pg]').forEach(b => b.classList.toggle('on', Number(b.dataset.pg) === j)); const im = $('#mapimg'); if (im) im.src = await imgURL(pages[j].id); };
+  if (pages.length) { $$('#mbox [data-pg]').forEach(b => b.onclick = () => show(Number(b.dataset.pg))); show(0); }
   $('#mapgo').onclick = () => {
     $$('#mbox [data-mi]').forEach(inp => { const c = task.criteria[Number(inp.dataset.mi)]; const v = inp.value.replace(/번/g, '').trim(); if (v !== (c.qnos || '')) c.qnosByTeacher = true; c.qnos = v; });
-    task.mapOk = true; save(); closeModal(true); then && then();
+    task.mapAt = task.mapAt || Date.now(); save(); closeModal(true); rerender(); toast('문항 대응을 저장했어요. 다음 AI 채점부터 적용돼요.');
   };
-}
-// AI 채점 전 준비: 판단 기준(+문항 대응)이 없으면 만들고, 대응을 선생님이 아직 확인하지 않았으면 확인 창
-async function prepGrade(task, cls, then) {
-  if (!hasGuide(task) && task.criteria.length) {
-    modal(`<h2>채점 준비</h2><p>첫 답안지(이름 가림)로 <b>판단 기준</b>과 <b>문항 대응</b>을 만드는 중…</p><div class="prog"><i style="width:60%"></i></div>`);
-    $('#modal').dataset.lock = '1';
-    try { await makeGuideFor(task, cls); } catch (e) { toast('판단 기준을 만들지 못했어요: ' + e.message, 4000); }
-    delete $('#modal').dataset.lock; closeModal(true);
-  }
-  if (!task.mapOk && task.criteria.length) { mapModal(task, then); return; }
-  then();
 }
 async function ensureGuide(task, cls) {
   if (hasGuide(task) || !task.criteria.length) return false;
@@ -1564,7 +1599,7 @@ const ACT = {
     const items = only || []; if (!only) for (let no = 1; no <= cls.size; no++) { const st = statusOf(cls, no); if (st === '채점 전') items.push(no); }
     if (!items.length) { toast('AI 채점할 학생이 없습니다(모두 채점했거나 답안이 없음).'); return; }
     if (jobFor('grade:' + cls.id)) { toast('이 반은 이미 AI 채점 중입니다.'); return; }
-    if (!task.mapOk || !hasGuide(task)) { prepGrade(task, cls, () => ACT.batchgrade(el, 'again', items)); return; }
+    if (needPrep(task)) { prepGrade(task, cls, () => ACT.batchgrade(el, 'again', items)); return; }
     const lv = task.strict || '보통';
     runBatch(`${cls.name} AI 채점(${lv}) — ${items.length}명`, items,
       async (no, sig) => { await runAIGrade(task, cls, no, sig); return 'AI ' + aiScoreOf(task, cls.students[no]) + '점'; },
@@ -1582,47 +1617,42 @@ const ACT = {
       { key: 'seteuk:' + cls.id, kind: 'seteuk', clsId: cls.id, where: '#/k/' + cls.id });
   },
   xlsx(el) { xlsxClass(el.dataset.id); },
-  // AI 채점 다시: 확인 전 학생만 / 답안이 있는 모두(채점 완료한 학생은 점수 그대로, AI 판단만 새로)
+  mapview(el) { mapModal(findTask(el.dataset.id).task); },
+  // AI 채점 다시: 학생을 골라서(채점 완료한 학생은 점수 그대로, AI 판단만 새로)
   regrade(el) {
     const { task, cls } = findClass(el.dataset.id);
-    const pick = all => { const a = []; for (let no = 1; no <= cls.size; no++) { const st = statusOf(cls, no); if (all ? (st !== '미제출' && st !== '미응시') : (st === 'AI 채점' || st === '채점 전')) a.push(no); } return a; };
-    const a = pick(false), b = pick(true);
-    if (!b.length) { toast('채점할 답안이 없어요.'); return; }
-    modal(`<h2>AI 채점 다시</h2>
-      <label class="opt"><input type="radio" name="rg" value="0" ${a.length ? 'checked' : 'disabled'}><span><b>확인 전 학생만</b> · ${a.length}명<br><small>체크를 새 AI 판단으로 바꿔요</small></span></label>
-      <label class="opt"><input type="radio" name="rg" value="1" ${a.length ? '' : 'checked'}><span><b>모든 학생</b> · ${b.length}명<br><small>'채점 완료'한 학생은 점수 그대로, AI 판단만 새로</small></span></label>
-      <div class="row" style="margin-top:12px"><span class="small muted">채점 기준</span>${strictSeg(task)}</div>
-      <div class="foot"><button class="btn" data-act="close">취소</button><button class="btn primary" id="rggo">${ic('bot')}다시 채점</button></div>`);
-    $('#rggo').onclick = () => {
-      const all = $('input[name=rg]:checked').value === '1';
-      const items = all ? b : a;
-      // 확인 전 학생은 선생님이 건드린 체크를 풀어 새 AI 판단이 들어가게 한다
-      items.forEach(no => { const s = stu(cls, no); if (!s.done) Object.assign(s, { touched: false, override: null, special: null, checks: [], pts: [] }); });
-      save(); closeModal(true);
-      ACT.batchgrade({ dataset: { id: cls.id } }, null, items);
-    };
+    const nos = []; for (let no = 1; no <= cls.size; no++) { const st = statusOf(cls, no); if (st !== '미제출' && st !== '미응시') nos.push(no); }
+    if (!nos.length) { toast('채점할 답안이 없어요.'); return; }
+    const sel = new Set(nos.filter(no => statusOf(cls, no) !== '채점 완료'));
+    const tag = no => ({ '채점 완료': '완료', 'AI 채점': '확인', '채점 전': '전' }[statusOf(cls, no)] || '');
+    pickModal({
+      title: 'AI 채점 다시', note: "고른 학생만 다시 채점해요. '채점 완료'한 학생은 점수 그대로, AI 판단만 새로.",
+      nos, sel, tag, quick: [['확인 필요', no => statusOf(cls, no) !== '채점 완료'], ['채점 완료', no => statusOf(cls, no) === '채점 완료']],
+      extra: `<div class="row" style="margin-top:12px"><span class="small muted">채점 기준</span>${strictSeg(task)}<span class="sp"></span><button class="lnk" data-act="mapview" data-id="${task.id}">시험지 보며 문항 맞추기</button></div>`,
+      go: `${ic('bot')}다시 채점`,
+      run: items => {
+        items.forEach(no => { const s = stu(cls, no); if (!s.done) Object.assign(s, { touched: false, override: null, special: null, checks: [], pts: [], creason: null }); });
+        save(); ACT.batchgrade({ dataset: { id: cls.id } }, null, items);
+      },
+    });
   },
-  // 세특 다시 쓰기: 채점된 학생 모두(직접 고친 세특은 건너뛸 수 있음)
+  // 세특 다시 쓰기: 학생을 골라서(직접 고친 세특은 처음에 빼 둠)
   reseteuk(el) {
     const { cls } = findClass(el.dataset.id);
-    const all = [], edited = [];
+    const nos = [], edited = new Set();
     for (let no = 1; no <= cls.size; no++) {
       const s = cls.students[no]; const st = statusOf(cls, no);
       if (!s || !(st === '채점 완료' || st === 'AI 채점')) continue;
-      all.push(no); if (s.seteuk && s.seteukAI && s.seteuk !== s.seteukAI) edited.push(no);
+      nos.push(no); if (s.seteuk && s.seteukAI && s.seteuk !== s.seteukAI) edited.add(no);
     }
-    if (!all.length) { toast('먼저 채점해 주세요.'); return; }
-    modal(`<h2>세특 다시 쓰기</h2>
-      <p>채점된 학생 <b>${all.length}명</b>의 세특을 새로 씁니다.</p>
-      ${edited.length ? `<label class="opt"><input type="checkbox" id="rskip" checked><span><b>직접 고친 세특은 그대로</b> · ${edited.length}명 (${edited.join(', ')}번)</span></label>` : ''}
-      <div class="foot"><button class="btn" data-act="close">취소</button><button class="btn primary" id="rsgo">${ICON.wand}다시 쓰기</button></div>`);
-    $('#rsgo').onclick = () => {
-      const skip = $('#rskip') && $('#rskip').checked;
-      const items = all.filter(no => !(skip && edited.includes(no)));
-      closeModal(true);
-      if (!items.length) { toast('다시 쓸 학생이 없어요.'); return; }
-      ACT.batchseteuk({ dataset: { id: cls.id } }, null, items);
-    };
+    if (!nos.length) { toast('먼저 채점해 주세요.'); return; }
+    pickModal({
+      title: '세특 다시 쓰기', note: edited.size ? `고른 학생만 새로 써요. 직접 고친 세특(${edited.size}명, '고침')은 빼 두었어요.` : '고른 학생만 새로 써요.',
+      nos, sel: new Set(nos.filter(no => !edited.has(no))), tag: no => edited.has(no) ? '고침' : (cls.students[no].seteuk ? '' : '없음'),
+      quick: [['세특 없는 학생', no => !cls.students[no].seteuk], ['직접 고친 것 빼고', no => !edited.has(no)]],
+      go: `${ICON.wand}다시 쓰기`,
+      run: items => ACT.batchseteuk({ dataset: { id: cls.id } }, null, items),
+    });
   },
   glogin() { closeModal(true); Sync.login().then(() => rerender()); },
   async glogout() {
@@ -1687,7 +1717,7 @@ const ACT = {
     const { task, cls, no } = gctx;
     if (!App.settings().apiKey) { settingsModal(); return; }
     if (!cls.masks.length && e !== 'again' && !confirm('이름 칸 가리기를 하지 않았습니다. 답안을 그대로 AI 로 보낼까요?')) return;
-    if (!task.mapOk || !hasGuide(task)) { prepGrade(task, cls, () => { const b = $('[data-act="aigrade"]'); if (b) ACT.aigrade(b, 'again'); }); return; }
+    if (needPrep(task)) { prepGrade(task, cls, () => { const b = $('[data-act="aigrade"]'); if (b) ACT.aigrade(b, 'again'); }); return; }
     el.disabled = true;
     if (!hasGuide(task)) { el.innerHTML = '판단 기준을 먼저 만드는 중…'; if (await ensureGuide(task, cls)) toast('판단 기준을 먼저 만들었습니다(채점 기준 화면에서 고칠 수 있음).', 3500); }
     el.innerHTML = 'AI 가 답안을 읽는 중… (10~40초)';
