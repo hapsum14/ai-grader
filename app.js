@@ -69,8 +69,11 @@ function renderCredit() {
       <div class="af-side">${v && v.total != null ? `<span class="af-vis" title="같은 브라우저는 30분에 한 번 세요"><span>${ic('users')}전체 <b>${v.total.toLocaleString()}</b></span><span>${ic('sun')}오늘 <b>${(v.today || 0).toLocaleString()}</b></span></span>` : ''}
         <a href="privacy.html" target="_blank">개인정보 처리방침</a></div>`;
   };
-  if (!el.innerHTML) paint(null);
-  (VISITS || (VISITS = visits())).then(paint);
+  // 위쪽 띠에도 짧게(넓은 화면에서는 이쪽만 보이고 바닥글은 숨김)
+  const top = document.getElementById('tcredit');
+  const paintTop = v => { if (top) top.innerHTML = `<a href="privacy.html" target="_blank" title="무단 배포 시 공유가 중지될 수 있습니다 · 개인정보 처리방침">made by. <b>가운고 김태하</b></a>${v && v.total != null ? `<span class="tv" title="전체 방문">${ic('users')}${v.total.toLocaleString()}</span><span class="tv" title="오늘 방문">${ic('sun')}${(v.today || 0).toLocaleString()}</span>` : ''}`; };
+  if (!el.innerHTML) { paint(null); paintTop(null); }
+  (VISITS || (VISITS = visits())).then(v => { paint(v); paintTop(v); });
 }
 const GCK = 'aigrader-gc';
 function gcLater(clsId) { try { const a = JSON.parse(localStorage.getItem(GCK) || '[]'); if (!a.includes(clsId)) a.push(clsId); localStorage.setItem(GCK, JSON.stringify(a)); } catch (e) {} }
