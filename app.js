@@ -538,7 +538,8 @@ function vTask(tid) {
       <div class="no">${i + 1}</div>
       <div><textarea class="in" rows="2" data-f="crit.text" data-i="${i}">${esc(c.text)}</textarea>
         <textarea class="in small" rows="2" style="margin-top:6px" placeholder="판단 기준(무엇이 있으면 충족인지)" data-f="crit.guide" data-i="${i}">${esc(c.guide || '')}</textarea></div>
-      <div>${t.mode === 'points' ? `<input class="in" type="number" step="0.5" value="${c.points || 0}" data-f="crit.points" data-i="${i}" title="배점">` : ''}</div>
+      <div><label class="small muted" title="이 기준을 판단할 시험지 문항">문항</label><input class="in qn" value="${esc(c.qnos || '')}" data-f="crit.qnos" data-i="${i}" placeholder="예: 3">
+        ${t.mode === 'points' ? `<input class="in" type="number" step="0.5" value="${c.points || 0}" data-f="crit.points" data-i="${i}" title="배점" style="margin-top:6px">` : ''}</div>
       <button class="btn sm ghost danger" data-act="delcrit" data-i="${i}" title="지우기">✕</button>
     </div>`).join('');
   const scale = (t.scale || []).map((s, i) => `<span class="it"><input class="in" type="number" value="${s.count}" data-f="scale.count" data-i="${i}">개 →<input class="in" type="number" step="0.5" value="${s.score}" data-f="scale.score" data-i="${i}">점<button class="btn sm ghost" data-act="delscale" data-i="${i}">✕</button></span>`).join('');
@@ -561,7 +562,7 @@ function vTask(tid) {
     ${t.levels.length ? `<details style="margin-top:10px"><summary class="small muted" style="cursor:pointer">성취수준 A~E 보기</summary><div class="small" style="margin-top:6px">${t.levels.map(l => `<div style="margin-bottom:4px"><b>${esc(l.grade)}</b> ${esc(l.text)}</div>`).join('')}</div></details>` : ''}
   </div>
   <div class="card">
-    <div class="sec-h">${ICON.check}채점 기준 항목<span class="sp"></span>
+    <div class="sec-h">${ICON.check}채점 기준 항목${t.criteria.some(c => c.qnos) && !t.mapOk ? '<span class="pill ai" title="AI 가 제안한 문항 대응 — 확인해 주세요">문항 대응 확인 필요</span>' : ''}<span class="sp"></span>
       <select class="in" style="width:auto" data-f="mode"><option value="count" ${t.mode !== 'points' ? 'selected' : ''}>충족한 항목 수로 점수</option><option value="points" ${t.mode === 'points' ? 'selected' : ''}>항목별 배점 합산</option></select></div>
     ${crit || '<p class="muted">항목이 없습니다.</p>'}
     <div class="row" style="margin-top:10px"><button class="btn sm" data-act="addcrit">+ 항목 추가</button>
@@ -586,6 +587,7 @@ function bindTaskInputs(t) {
       const num = x => (x === '' ? 0 : Number(x));
       if (f === 'crit.text') t.criteria[i].text = v;
       else if (f === 'crit.guide') t.criteria[i].guide = v;
+      else if (f === 'crit.qnos') { t.criteria[i].qnos = v.replace(/번/g, '').trim(); t.criteria[i].qnosByTeacher = true; t.mapOk = true; }
       else if (f === 'crit.points') t.criteria[i].points = num(v);
       else if (f === 'scale.count') t.scale[i].count = num(v);
       else if (f === 'scale.score') t.scale[i].score = num(v);
@@ -850,7 +852,7 @@ function firstTodo(cls) {
 }
 
 /* ================= 채점 화면 ================= */
-const G = { page: 0, zoom: 1, rot: 0, tab: 'img', showMask: false, why: false, aiOpen: false, openQ: null, addMark: null, navIds: null, navKid: '' };
+const G = { page: 0, zoom: 1, rot: 0, tab: 'img', showMask: false, why: (() => { try { return localStorage.getItem('aigrader-why') !== '0'; } catch (e) { return true; } })(), aiOpen: false, openQ: null, addMark: null, navIds: null, navKid: '' };
 // 이전/다음 학생: 반 화면에서 보던 목록(상태 거르기·정렬) 순서. 지금 학생이 목록에서 빠졌어도 그 자리에서 이어 간다
 function navStep(task, cls, no, d) {
   const ids = G.navKid === cls.id && G.navIds ? G.navIds : listNos(task, cls);
@@ -971,13 +973,17 @@ function vGrade(kid, no) {
   const crit = task.criteria.map((c, i) => {
     const a = s.ai && s.ai.criteria.find(x => x.index === i + 1);
     const checked = s.touched ? !!s.checks[i] : false;
-    return `<label class="citem">
+    const mine = s.creason && s.creason[i] != null;
+    const why = G.why && (a || mine) ? `<div class="why">
+        ${a && a.evidence ? `<q>${esc(a.evidence)}</q>` : ''}
+        <textarea class="in whyin" data-wi="${i}" rows="2" placeholder="채점 근거">${esc(mine ? s.creason[i] : (a && a.reason) || '')}</textarea>
+        ${mine && a && a.reason && s.creason[i] !== a.reason ? `<div class="aiorig"><span>AI: ${esc(a.reason)}</span><button class="lnk" data-act="whyreset" data-i="${i}">AI 것으로</button></div>` : ''}</div>` : '';
+    return `<div class="citem"><label class="crow">
       ${task.mode === 'points' ? `<span class="cno">${i + 1}</span>` : `<input type="checkbox" data-act="chk" data-i="${i}" ${checked ? 'checked' : ''}>`}
-      <span class="ct">${task.mode === 'points' ? '' : `<span class="cno">${i + 1}</span>`}${esc(c.text)}</span>
+      <span class="ct">${task.mode === 'points' ? '' : `<span class="cno">${i + 1}</span>`}${esc(c.text)}${c.qnos ? ` <span class="qtag" title="판단할 시험지 문항">문항 ${esc(c.qnos)}</span>` : ''}</span>
       <span class="row" style="gap:6px">${a ? `<span class="mark ${a.met ? 'y' : 'n'}" title="AI 판단">${a.met ? 'AI ✓' : 'AI ✗'}</span>` : ''}
         ${task.mode === 'points' ? `<input class="ptinput" type="number" step="0.5" min="0" max="${c.points}" value="${s.touched ? (s.pts[i] || 0) : ''}" data-act="pt" data-i="${i}"><span class="faint small">/${c.points}</span>` : ''}</span>
-      ${G.why && a && (a.reason || a.evidence) ? `<span class="why">${a.evidence ? `<q>${esc(a.evidence)}</q> ` : ''}${esc(a.reason || '')}</span>` : ''}
-    </label>`;
+    </label>${why}</div>`;
   }).join('');
   const chips = scoreChoices(task).map(v => `<button class="chip ${sc === v && s.special == null ? 'on' : ''}" data-act="setscore" data-v="${v}">${v}</button>`).join('');
   const specs = (task.specials || []).map(x => `<button class="chip gray ${s.special === x.score ? 'on' : ''}" data-act="special" data-v="${x.score}" title="${esc(x.label)}">${esc(x.label.length > 8 ? x.label.slice(0, 8) + '…' : x.label)} ${x.score}</button>`).join('');
@@ -1000,6 +1006,7 @@ function vGrade(kid, no) {
       }
     }
     const fb = $('#tfb'); if (fb) fb.addEventListener('input', () => { s.feedback = fb.value; save(); });
+    $$('.whyin').forEach(t => t.addEventListener('input', () => { s.creason = s.creason || {}; s.creason[t.dataset.wi] = t.value; save(); }));
     const memo = $('#tmemo'); if (memo) memo.addEventListener('input', () => { s.memo = memo.value; save(); });
     const se = $('#tset'); if (se) se.addEventListener('input', () => { s.seteuk = se.value; save(); updBytes(se.value); });
     const ad = $('#aidet'); if (ad) ad.addEventListener('toggle', () => { G.aiOpen = ad.open; });
@@ -1034,7 +1041,7 @@ function vGrade(kid, no) {
         <span class="seg sm">${['', '미제출', '미응시'].map(v => `<button class="${(s.status || '') === v ? 'on' : ''}" data-act="status" data-v="${v}">${v || '제출'}</button>`).join('')}</span>
       </div>
       <div class="gsec">
-        <div class="sec-h">채점 기준<span class="sp"></span>${s.ai ? `<button class="lnk" data-act="why">${G.why ? '근거 숨기기' : 'AI 근거 보기'}</button>` : ''}</div>
+        <div class="sec-h">채점 기준<span class="sp"></span>${s.ai ? `<button class="lnk" data-act="why">${G.why ? '근거 접기' : '근거 보기·고치기'}</button>` : ''}</div>
         ${crit || `<p class="muted">채점 기준이 없어요. <a href="#/t/${task.id}">넣기</a></p>`}
         <div class="row" style="margin-top:12px;gap:6px">${chips}${specs}</div>
         <div class="row" style="margin-top:10px;justify-content:flex-end;gap:6px">
@@ -1090,10 +1097,34 @@ async function makeGuideFor(task, cls) {
   const imgs = k ? await aiImages(k, k.subs[0]) : [];
   const r = await AI.makeGuide(task, imgs);
   let n = 0;
-  (r.criteria || []).forEach(c => { const x = task.criteria[Number(c.index) - 1]; if (x && c.guide) { x.guide = c.guide; n++; } });
+  (r.criteria || []).forEach(c => { const x = task.criteria[Number(c.index) - 1]; if (!x) return; if (c.guide) { x.guide = c.guide; n++; } if (c.questions && !x.qnosByTeacher) x.qnos = String(c.questions).replace(/번/g, '').trim(); });
+  task.mapOk = false;
   if (r.answerKey) task.answerKey = r.answerKey;
   task.guideAt = Date.now(); save();
   return n;
+}
+// 채점 기준 ↔ 시험지 문항 대응: AI 가 제안하고 선생님이 확인한다(기준 1 이 문항 1 이라는 보장은 없음)
+function mapModal(task, then) {
+  modal(`<h2>채점 기준과 문항 맞추기</h2>
+    <p class="small muted">기준마다 판단할 <b>시험지 문항 번호</b>를 확인하세요. 기준 번호와 문항 번호는 다를 수 있어요. 비워 두면 AI 가 내용으로 찾습니다.</p>
+    <div class="maptb">${task.criteria.map((c, i) => `<div class="mr"><span class="mi">${i + 1}</span><span class="mt">${esc(c.text)}</span>
+      <label class="mq"><input class="in" data-mi="${i}" value="${esc(c.qnos || '')}" placeholder="예: 3">번</label></div>`).join('')}</div>
+    <div class="foot"><button class="btn" data-act="close">취소</button><button class="btn primary" id="mapgo">${ic('check')}확인하고 채점</button></div>`);
+  $('#mapgo').onclick = () => {
+    $$('#mbox [data-mi]').forEach(inp => { const c = task.criteria[Number(inp.dataset.mi)]; const v = inp.value.replace(/번/g, '').trim(); if (v !== (c.qnos || '')) c.qnosByTeacher = true; c.qnos = v; });
+    task.mapOk = true; save(); closeModal(true); then && then();
+  };
+}
+// AI 채점 전 준비: 판단 기준(+문항 대응)이 없으면 만들고, 대응을 선생님이 아직 확인하지 않았으면 확인 창
+async function prepGrade(task, cls, then) {
+  if (!hasGuide(task) && task.criteria.length) {
+    modal(`<h2>채점 준비</h2><p>첫 답안지(이름 가림)로 <b>판단 기준</b>과 <b>문항 대응</b>을 만드는 중…</p><div class="prog"><i style="width:60%"></i></div>`);
+    $('#modal').dataset.lock = '1';
+    try { await makeGuideFor(task, cls); } catch (e) { toast('판단 기준을 만들지 못했어요: ' + e.message, 4000); }
+    delete $('#modal').dataset.lock; closeModal(true);
+  }
+  if (!task.mapOk && task.criteria.length) { mapModal(task, then); return; }
+  then();
 }
 async function ensureGuide(task, cls) {
   if (hasGuide(task) || !task.criteria.length) return false;
@@ -1107,7 +1138,7 @@ async function runAIGrade(task, cls, no, signal) {
   const s = stu(cls, no);
   r.criteria = (r.criteria || []).map(c => ({ index: Number(c.index), met: !!c.met, points: Number(c.points) || 0, evidence: c.evidence || '', reason: c.reason || '' }));
   s.ai = Object.assign(r, { at: Date.now(), model: AI.isMock() ? '모의' : App.settings().model, strict: task.strict || '보통' });
-  if (!s.qmarksEdited || !(s.qmarks || []).length) s.qmarks = qmarksFrom(r);
+  if (r.questions && (!s.qmarksEdited || !(s.qmarks || []).length)) s.qmarks = qmarksFrom(r);
   if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
   if (!s.feedback && r.feedback) s.feedback = r.feedback;
   save();
@@ -1117,14 +1148,15 @@ async function runSeteuk(task, cls, no, signal) {
   const set = App.settings(); let rng = [set.byteMin, set.byteMax];
   const info = seteukInfo(task, s);
   if (levelOf(task, s) === '하') rng = [Math.min(120, rng[0]), rng[1], 'low'];
-  const styles = Style.pick(task);
+  const styles = Style.pick(task, 3);
   let best = null, prev = null;
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < 2; k++) {
     const r = await AI.seteuk(task, info, rng, prev, signal, styles);
     const text = String(r.text || '').replace(/\s+/g, ' ').trim();
     const b = App.bytes(text);
     const dist = b > rng[1] ? b - rng[1] : b < rng[0] ? rng[0] - b : 0;
     if (!best || dist < best.dist) best = { text, b, dist };
+    if (dist <= Math.round(rng[1] * 0.1) && b <= rng[1] + 15) { best = { text, b, dist }; break; } // 거의 맞으면 다시 쓰지 않음(토큰 아끼기)
     if (!dist) break;
     prev = { text, bytes: b };
   }
@@ -1369,16 +1401,17 @@ function helpModal(sec) {
 function fname(s) { return String(s).replace(/[\\/:*?"<>|]/g, '_'); }
 function xlsxClass(kid) {
   const { course, task, cls } = findClass(kid);
-  const head = ['번호', '상태', ...task.criteria.map((c, i) => `기준${i + 1}`), 'AI 점수', '점수', '문항 표시', '피드백', '세특', '세특 바이트'];
+  const head = ['번호', '상태', ...task.criteria.map((c, i) => `기준${i + 1}`), 'AI 점수', '점수', '문항 표시', '채점 근거', '피드백', '세특', '세특 바이트'];
   const rows = [head];
   for (let no = 1; no <= cls.size; no++) {
     const s = cls.students[no] || {}; const st = statusOf(cls, no);
     const marks = task.criteria.map((c, i) => !s.touched ? '' : task.mode === 'points' ? (s.pts[i] || 0) : (s.checks[i] ? 'O' : 'X'));
     const qm = (s.qmarks || []).map(q => `${q.no} ${QM[q.mark]}${q.reason ? ' ' + q.reason : ''}`).join(' / ');
-    rows.push([no, st, ...marks, aiScoreOf(task, s) ?? '', scoreOf(task, s) ?? '', qm, s.feedback || '', s.seteuk || '', s.seteuk ? App.bytes(s.seteuk) : '']);
+    const why = task.criteria.map((c, i) => { const a = s.ai && s.ai.criteria.find(x => x.index === i + 1); const r = s.creason && s.creason[i] != null ? s.creason[i] : a && a.reason; return r ? `${i + 1}. ${r}` : ''; }).filter(Boolean).join('\n');
+    rows.push([no, st, ...marks, aiScoreOf(task, s) ?? '', scoreOf(task, s) ?? '', qm, why, s.feedback || '', s.seteuk || '', s.seteuk ? App.bytes(s.seteuk) : '']);
   }
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = head.map((h, i) => ({ wch: h === '세특' || h === '피드백' ? 60 : h === '문항 표시' ? 40 : i === 1 ? 10 : 8 }));
+  ws['!cols'] = head.map((h, i) => ({ wch: h === '세특' || h === '피드백' ? 60 : h === '문항 표시' || h === '채점 근거' ? 50 : i === 1 ? 10 : 8 }));
   const crit = [['번호', '채점 기준', '판단 기준', '배점']].concat(task.criteria.map((c, i) => [i + 1, c.text, c.guide || '', task.mode === 'points' ? c.points : '']));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '채점 결과');
@@ -1527,10 +1560,11 @@ const ACT = {
   async batchgrade(el, e, only) {
     const { course, task, cls } = findClass(el.dataset.id); task._subject = course.name;
     if (!App.settings().apiKey) { settingsModal(); return; }
-    if (!cls.masks.length && !confirm('이름 칸 가리기를 하지 않았습니다. 그래도 답안을 그대로 AI 로 보낼까요?')) return;
+    if (!cls.masks.length && e !== 'again' && !confirm('이름 칸 가리기를 하지 않았습니다. 그래도 답안을 그대로 AI 로 보낼까요?')) return;
     const items = only || []; if (!only) for (let no = 1; no <= cls.size; no++) { const st = statusOf(cls, no); if (st === '채점 전') items.push(no); }
     if (!items.length) { toast('AI 채점할 학생이 없습니다(모두 채점했거나 답안이 없음).'); return; }
     if (jobFor('grade:' + cls.id)) { toast('이 반은 이미 AI 채점 중입니다.'); return; }
+    if (!task.mapOk || !hasGuide(task)) { prepGrade(task, cls, () => ACT.batchgrade(el, 'again', items)); return; }
     const lv = task.strict || '보통';
     runBatch(`${cls.name} AI 채점(${lv}) — ${items.length}명`, items,
       async (no, sig) => { await runAIGrade(task, cls, no, sig); return 'AI ' + aiScoreOf(task, cls.students[no]) + '점'; },
@@ -1623,7 +1657,8 @@ const ACT = {
   rot() { G.rot = (G.rot + 90) % 360; rerender(); },
   zoom(el) { const d = Number(el.dataset.d); G.zoom = d ? Math.max(0.4, Math.min(3, G.zoom + d)) : 1; rerender(); },
   maskview() { G.showMask = !G.showMask; rerender(); },
-  why() { G.why = !G.why; rerender(); },
+  why() { G.why = !G.why; try { localStorage.setItem('aigrader-why', G.why ? '1' : '0'); } catch (e) {} rerender(); },
+  whyreset(el) { const s = stu(gctx.cls, gctx.no); if (s.creason) delete s.creason[el.dataset.i]; save(); rerender(); },
   qopen(el) {
     const s = stu(gctx.cls, gctx.no); const i = Number(el.dataset.i); const q = s.qmarks[i];
     G.tab = 'img';
@@ -1648,15 +1683,16 @@ const ACT = {
   resetscore() { const s = stu(gctx.cls, gctx.no); Object.assign(s, { checks: [], pts: [], touched: false, override: null, special: null, done: false }); save(); rerender(); },
   applyai() { const s = stu(gctx.cls, gctx.no); applyAI(gctx.task, s); save(); rerender(); toast('AI 판단을 적용했습니다.'); },
   copyfb() { const s = stu(gctx.cls, gctx.no); s.feedback = s.ai.feedback; save(); rerender(); },
-  async aigrade(el) {
+  async aigrade(el, e) {
     const { task, cls, no } = gctx;
     if (!App.settings().apiKey) { settingsModal(); return; }
-    if (!cls.masks.length && !confirm('이름 칸 가리기를 하지 않았습니다. 답안을 그대로 AI 로 보낼까요?')) return;
+    if (!cls.masks.length && e !== 'again' && !confirm('이름 칸 가리기를 하지 않았습니다. 답안을 그대로 AI 로 보낼까요?')) return;
+    if (!task.mapOk || !hasGuide(task)) { prepGrade(task, cls, () => { const b = $('[data-act="aigrade"]'); if (b) ACT.aigrade(b, 'again'); }); return; }
     el.disabled = true;
     if (!hasGuide(task)) { el.innerHTML = '판단 기준을 먼저 만드는 중…'; if (await ensureGuide(task, cls)) toast('판단 기준을 먼저 만들었습니다(채점 기준 화면에서 고칠 수 있음).', 3500); }
     el.innerHTML = 'AI 가 답안을 읽는 중… (10~40초)';
     const s0 = stu(cls, no);
-    if (s0.ai && !s0.done) Object.assign(s0, { touched: false, override: null, special: null, checks: [], pts: [] });
+    if (s0.ai && !s0.done) Object.assign(s0, { touched: false, override: null, special: null, checks: [], pts: [], creason: null });
     try { await runAIGrade(task, cls, no); if (gctx && gctx.no === no) rerender(); toast(`${no}번 AI 채점: ${aiScoreOf(task, cls.students[no])}점`); }
     catch (e) { toast(e.message, 5000); el.disabled = false; el.textContent = 'AI 채점 실행'; }
   },

@@ -11,6 +11,7 @@ const AI = (() => {
   const O = (properties, required) => ({ type: 'OBJECT', properties, required: required || Object.keys(properties) });
 
   const cfg = () => App.settings();
+  const usage = { last: null };
   const isMock = () => (cfg().apiKey || '').trim().toLowerCase() === 'mock';
 
   async function call(opts, retried) {
@@ -64,6 +65,7 @@ const AI = (() => {
           const cand = j.candidates && j.candidates[0];
           if (cand && cand.content) txt += (cand.content.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
           why = (cand && cand.finishReason) || (j.promptFeedback && j.promptFeedback.blockReason) || why;
+          if (j.usageMetadata) usage.last = Object.assign({ model }, j.usageMetadata); // 토큰 쓰임(확인용)
         };
         if (stream) {
           // 받는 대로 글자 수를 알려 준다(server-sent events: "data: {...}")
@@ -255,39 +257,31 @@ const AI = (() => {
   // ---------- 2. 채점 지침 다듬기(문항지를 보고) ----------
   const GUIDE_SCHEMA = O({
     answerKey: S('문항별 모범 답안 요지(문항 번호마다 한두 줄)'),
-    criteria: A(O({ index: I('채점 기준 번호(1부터)'), guide: S('판단 기준: 충족으로 볼 핵심 요소, 부분 인정 여부, 흔한 오답') })),
+    criteria: A(O({ index: I('채점 기준 번호(1부터)'), questions: S('이 기준을 판단할 시험지 문항 번호(예: 3 또는 1, 2-1). 기준 번호와 문항 번호는 다를 수 있으니 문항 글을 읽고 정한다'), guide: S('판단 기준: 충족으로 볼 핵심 요소, 부분 인정 여부, 흔한 오답') })),
   });
   async function makeGuide(task, images) {
-    if (isMock()) return { answerKey: '1. (모의) 펩신은 최적 pH 2, 소장은 pH 8 이라 활성이 떨어진다.\n2. (모의) A 보조 인자, B 주효소…', criteria: task.criteria.map((c, i) => ({ index: i + 1, guide: '(모의 지침) ' + c.text.slice(0, 30) + '… 핵심 개념과 이유가 함께 있으면 충족' })) };
+    if (isMock()) return { answerKey: '1. (모의) 펩신은 최적 pH 2, 소장은 pH 8 이라 활성이 떨어진다.\n2. (모의) A 보조 인자, B 주효소…', criteria: task.criteria.map((c, i) => ({ index: i + 1, questions: String([3, 1, 1, 2, 4, 4][i] || i + 1), guide: '(모의 지침) ' + c.text.slice(0, 30) + '… 핵심 개념과 이유가 함께 있으면 충족' })) };
     const parts = [{ text: taskBrief(task, true) }];
     if (task.question) parts.push({ text: '선생님이 적은 문항·정답 메모:\n' + task.question });
     images.forEach((b64, i) => { parts.push({ text: `문항지(학생 답안지) ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
-    parts.push({ text: '문항지의 각 문항이 어떤 채점 기준 항목과 이어지는지 보고, 항목마다 채점 지침(guide)과 문항별 모범 답안 요지(answerKey)를 써 주세요. 학생이 쓴 손글씨 답은 정답 판단에 쓰지 말고 문항 글만 보세요.' });
+    parts.push({ text: '문항지의 각 문항을 읽고, 채점 기준 항목마다 그 기준을 판단할 문항 번호(questions)를 정해 주세요. 채점 기준 번호와 문항 번호는 같지 않을 수 있습니다(예: 기준 1 효소의 종류 → 문항 3). 항목마다 채점 지침(guide)과 문항별 모범 답안 요지(answerKey)도 써 주세요. 학생이 쓴 손글씨 답은 정답 판단에 쓰지 말고 문항 글만 보세요.' });
     return call({ system: '너는 고등학교 과학 수행평가 채점 지침을 만드는 교사 조수다. 교과서 수준의 정확한 과학 내용으로 쓰고, 채점 기준 원문의 뜻을 넓히거나 좁히지 않는다.', parts, schema: GUIDE_SCHEMA, temperature: 0.2 });
   }
 
   // ---------- 3. 학생 답안 채점 ----------
   const GRADE_SCHEMA = O({
-    transcript: S('학생 답안을 문항 번호별로 옮겨 적은 것(손글씨 그대로, 읽을 수 없는 글자는 □)'),
+    transcript: S('문항 번호별로 학생 답의 핵심만 1~2줄씩 옮겨 적은 것(읽을 수 없는 글자는 □)'),
     blank: B('답안이 백지이거나 의미 있는 답이 거의 없으면 true'),
     unreadable: B('글씨가 흐리거나 잘려서 판단이 어려우면 true'),
     criteria: A(O({
       index: I('채점 기준 번호(1부터)'),
       met: B('충족 여부'),
       points: N('points 방식일 때 준 점수, count 방식이면 0'),
-      evidence: S('판단 근거가 된 학생 답 인용(짧게)'),
-      reason: S('충족/미충족 이유 한두 문장'),
+      evidence: S('판단 근거가 된 학생 답 인용(30자 이내)'),
+      reason: S('맨 앞에 본 문항 번호를 [3번]처럼 쓰고, 충족/미충족 이유 한 문장(50자 이내)'),
     })),
-    questions: A(O({
-      no: S('문항 번호(시험지에 적힌 그대로, 예: 1, 2, 3-1)'),
-      mark: S('O(맞음), △(부분 정답), X(틀림 또는 미기재) 가운데 하나'),
-      reason: S('채점 이유를 15자 안팎으로 아주 짧게(예: 답안 미기재, pH 관련 설명 없음, 정확함)'),
-      page: I('그 문항 번호가 있는 학생 답안 쪽(1부터)'),
-      y: I('그 문항 번호 글자의 세로 위치, 쪽 위 끝 0 ~ 아래 끝 1000'),
-      x: I('그 문항 번호 글자의 가로 위치, 쪽 왼쪽 끝 0 ~ 오른쪽 끝 1000'),
-    }), '시험지의 문항마다 하나씩, 문항 번호 순서대로'),
-    feedback: S('학생에게 돌려줄 피드백 2~3문장(잘한 점 1 + 보완할 점 1~2, 존댓말)'),
-    observation: S('세특 작성을 위한 관찰 요약: 학생이 실제로 보여 준 이해·사고 수준과 특징 2~3문장(답안에 있는 사실만)'),
+    feedback: S('학생에게 돌려줄 피드백 2문장(잘한 점 1 + 보완할 점 1, 존댓말)'),
+    observation: S('세특 작성을 위한 관찰 요약: 학생이 실제로 보여 준 이해와 특징 2문장(답안에 있는 사실만)'),
   });
   const GRADE_SYS = `너는 한국 고등학교 수행평가 채점을 돕는 조수다. 최종 점수는 교사가 정한다.
 규칙:
@@ -296,7 +290,8 @@ const AI = (() => {
 - 답이 과학적으로 틀렸거나 핵심 이유가 빠졌으면 충족이 아니다. 표현이 서툴러도 핵심 개념과 이유가 맞으면 충족이다.
 - 근거(evidence)는 학생 답에서 그대로 인용한다. 답안에 없는 내용을 지어내지 않는다.
 - 판단이 애매하면 reason 에 '애매함'이라고 밝힌다.
-- questions: 시험지의 문항(1, 2, 3 …)마다 O/△/X 와 아주 짧은 이유를 쓴다. 답이 비어 있으면 X 에 '답안 미기재'. 그 문항 번호(예: '1.')가 이미지에서 있는 자리를 0~1000 좌표로 정확히 적는다(교사가 그 자리에 빨간 표시를 한다).`;
+- 채점 기준 번호와 시험지 문항 번호는 같지 않을 수 있다. 기준마다 '판단할 문항'이 적혀 있으면 그 문항의 답으로 판단하고, 없으면 기준 내용과 가장 맞는 문항을 찾아 판단한다. reason 맨 앞에 본 문항 번호를 [3번]처럼 쓴다.
+- 출력은 짧게: transcript 는 문항당 1~2줄, reason 은 한 문장.`;
 
   // 채점 엄격도: 기준에 '어느 정도 들어오면' 충족으로 볼지. 과학적으로 틀린 답은 어느 쪽이든 미충족.
   const STRICT = {
@@ -320,7 +315,7 @@ const AI = (() => {
     if (task.question) parts.push({ text: '선생님 메모:\n' + task.question });
     images.forEach((b64, i) => { parts.push({ text: `학생 답안 ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
     parts.push({ text: STRICT[lv] + `\n\n채점 기준 ${task.criteria.length}개 항목을 모두 위 엄격도로 판단해 JSON 으로 답해 주세요.` });
-    return call({ system: GRADE_SYS + '\n- 충족을 가르는 선은 사용자가 준 "채점 엄격도"를 따른다.', parts, schema: GRADE_SCHEMA, temperature: 0.1, signal });
+    return call({ system: GRADE_SYS + '\n- 충족을 가르는 선은 사용자가 준 "채점 엄격도"를 따른다.', parts, schema: GRADE_SCHEMA, temperature: 0.1, signal, think: 'low' });
   }
 
   // ---------- 4. 세특(수행평가 한 개 몫) ----------
@@ -370,10 +365,10 @@ const AI = (() => {
     L.push(`과목: ${task._subject || ''}`);
     L.push(`수행평가: ${task.name} (만점 ${task.maxScore}점, ${task.method || ''})`);
     if (task.assignment) L.push(`수행 과제: ${task.assignment}`);
-    if (task.standards && task.standards.length) L.push('성취기준:\n' + task.standards.map(s => typeof s === 'string' ? s : `${s.code} ${s.text}`).join('\n'));
-    if (task.levels && task.levels.length) L.push('성취수준:\n' + task.levels.map(l => `${l.grade}: ${l.text}`).join('\n'));
+    if (!withGuide && task.standards && task.standards.length) L.push('성취기준:\n' + task.standards.map(s => typeof s === 'string' ? s : `${s.code} ${s.text}`).join('\n'));
+
     L.push(`채점 방식: ${task.mode === 'points' ? '항목별 배점 합산' : '충족한 항목 수로 점수 결정'}`);
-    L.push('채점 기준 항목:\n' + task.criteria.map((c, i) => `${i + 1}. ${c.text}${task.mode === 'points' ? ` (${c.points}점)` : ''}${withGuide && c.guide ? `\n   - 판단 기준: ${c.guide}` : ''}`).join('\n'));
+    L.push('채점 기준 항목(기준 번호와 문항 번호는 다를 수 있음):\n' + task.criteria.map((c, i) => `${i + 1}. ${c.text}${task.mode === 'points' ? ` (${c.points}점)` : ''}${withGuide && c.qnos ? `\n   - 판단할 문항: ${c.qnos}번` : ''}${withGuide && c.guide ? `\n   - 판단 기준: ${c.guide}` : ''}`).join('\n'));
     return L.join('\n');
   }
 
@@ -395,12 +390,9 @@ const AI = (() => {
     const cut = { '관대': 0.15, '보통': 0.35, '엄격': 0.6 }[lv] || 0.35;
     const crit = task.criteria.map((c, i) => {
       const met = Math.random() > cut;
-      return { index: i + 1, met, points: task.mode === 'points' ? (met ? c.points : 0) : 0, evidence: met ? '(모의) 학생 답 인용' : '', reason: met ? '(모의) 핵심 개념과 이유가 맞음' : '(모의) 이유가 빠짐' };
+      return { index: i + 1, met, points: task.mode === 'points' ? (met ? c.points : 0) : 0, evidence: met ? '(모의) 학생 답 인용' : '', reason: `[${c.qnos || i + 1}번] ` + (met ? '(모의) 핵심 개념과 이유가 맞음' : '(모의) 이유가 빠짐') };
     });
-    return { transcript: '1. (모의 인식 결과) 펩신의 최적 pH 가 다르기 때문이다…\n2. A: 보조 인자, B: 주효소 …', blank: false, unreadable: false, criteria: crit, questions: [[1, 1, 300, 60], [2, 1, 790, 60], [3, 2, 120, 60], [4, 2, 560, 60]].map(([no, page, y, x]) => {
-      const m = ['O', '△', 'X'][Math.floor(Math.random() * 3)];
-      return { no: String(no), mark: m, reason: m === 'O' ? '(모의) 정확함' : m === '△' ? '(모의) 이유 일부 빠짐' : '(모의) 답안 미기재', page, y, x };
-    }), feedback: '(모의) pH 와 효소 활성의 관계를 정확히 설명했습니다. 보조 인자의 역할을 조금 더 구체적으로 써 보세요.', observation: '(모의) 펩신과 트립신의 최적 pH 차이로 소장에서의 작용을 설명함.' };
+    return { transcript: '1. (모의 인식 결과) 펩신의 최적 pH 가 다르기 때문이다…\n2. A: 보조 인자, B: 주효소 …', blank: false, unreadable: false, criteria: crit, feedback: '(모의) pH 와 효소 활성의 관계를 정확히 설명했습니다. 보조 인자의 역할을 조금 더 구체적으로 써 보세요.', observation: '(모의) 펩신과 트립신의 최적 pH 차이로 소장에서의 작용을 설명함.' };
   }
   function mockSeteuk(task, info, range) {
     let t = `${task.name.replace(/(실험|탐구)/g, ' $1 ').replace(/\s+/g, ' ').trim()} 활동에서는 펩신과 트립신의 최적 pH 차이를 근거로 소장에서 펩신이 작용하는 조건을 설명하고, 온도와 pH를 변인으로 효소 활성 실험을 설계함.`;
@@ -408,5 +400,5 @@ const AI = (() => {
     return { text: t, level: '분석' };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage };
 })();

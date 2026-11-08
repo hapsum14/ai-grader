@@ -363,7 +363,7 @@ const Parse = (() => {
   }
 
   // 가림 영역을 칠한 그림(AI 로 보낼 것) → base64 jpeg
-  async function maskedBase64(blob, rects, maxSide = 1600) {
+  async function maskedBase64(blob, rects, maxSide = 1400) {
     const url = URL.createObjectURL(blob);
     try {
       const img = await loadImage(url);
