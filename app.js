@@ -117,19 +117,31 @@ function scaleScore(task, n) {
   const hit = sc.find(x => x.count <= n);
   return hit ? hit.score : null;
 }
+// 평가 요소가 여럿이면 요소마다 '충족 개수 → 점수' 표를 따로 적용해 더한다
+function countScore(task, mets) {
+  const parts = [...new Set(task.criteria.map(c => c.part || 1))];
+  if (parts.length < 2 || !(task.scale || []).some(x => (x.part || 1) !== 1)) return scaleScore(task, mets.filter(Boolean).length);
+  let total = 0;
+  for (const p of parts) {
+    const n = task.criteria.reduce((k, c, i) => k + ((c.part || 1) === p && mets[i] ? 1 : 0), 0);
+    const hit = (task.scale || []).filter(x => (x.part || 1) === p).sort((a, b) => b.count - a.count).find(x => x.count <= n);
+    if (!hit) return null; total += hit.score;
+  }
+  return total;
+}
 function scoreOf(task, s) {
   if (!s) return null;
   if (s.special != null) return s.special;
   if (s.override != null) return s.override;
   if (!s.touched) return null;
   if (task.mode === 'points') return sum(s.pts);
-  return scaleScore(task, s.checks.filter(Boolean).length);
+  return countScore(task, task.criteria.map((c, i) => !!s.checks[i]));
 }
 function aiScoreOf(task, s) {
   if (!s || !s.ai || !s.ai.criteria) return null;
   if (s.ai.blank) { const sp = (task.specials || []).find(x => /백지/.test(x.label)); if (sp) return sp.score; }
   if (task.mode === 'points') return sum(s.ai.criteria.map(c => c.points));
-  return scaleScore(task, s.ai.criteria.filter(c => c.met).length);
+  return countScore(task, task.criteria.map((c, i) => { const x = s.ai.criteria.find(y => y.index === i + 1); return !!(x && x.met); }));
 }
 function applyAI(task, s) {
   const n = task.criteria.length;
@@ -139,7 +151,11 @@ function applyAI(task, s) {
   if (s.ai.blank) { const sp = (task.specials || []).find(x => /백지/.test(x.label)); if (sp) s.special = sp.score; }
 }
 function scoreChoices(task) {
-  const set = new Set((task.scale || []).map(x => x.score));
+  let set = new Set((task.scale || []).map(x => x.score));
+  const parts = [...new Set((task.scale || []).map(x => x.part || 1))];
+  if (parts.length > 1) { // 요소별 점수의 합으로 나올 수 있는 값
+    set = parts.reduce((acc, p) => { const vs = (task.scale || []).filter(x => (x.part || 1) === p).map(x => x.score); const nx = new Set(); acc.forEach(a => vs.forEach(v => nx.add(a + v))); return nx; }, new Set([0]));
+  }
   if (task.mode === 'points') { for (let v = task.maxScore; v >= 0; v--) set.add(v); }
   return [...set].filter(v => v != null).sort((a, b) => b - a);
 }
@@ -506,11 +522,56 @@ async function startPlan(src) {
     delete $('#modal').dataset.lock; closeModal();
     toast(`${Math.round((Date.now() - t0) / 1000)}초 만에 수행평가 ${c.tasks.length}개를 찾았습니다. 채점 기준을 확인해 주세요.`, 3500);
     location.hash = '#/c/' + c.id;
+    const multi = c.tasks.filter(t => partsOf(t));
+    if (multi.length) setTimeout(() => splitAsk(c, multi, () => rerender()), 400);
   } catch (e) {
     clearInterval(timer);
     delete $('#modal').dataset.lock;
     modal(`<h2>분석하지 못했습니다</h2><p>${esc(e.message)}</p><div class="foot">${/키/.test(e.message) ? '<button class="btn primary" data-act="settings">설정 열기</button>' : ''}<button class="btn" data-act="close">닫기</button></div>`);
   }
+}
+
+// 평가 요소가 둘 이상인 수행평가(시험지가 따로인 경우): 요소마다 수행평가 하나로 나눈다
+function partsOf(t) {
+  const ps = t.parts || [];
+  if (ps.length < 2) return null;
+  const used = new Set(t.criteria.map(c => c.part || 1));
+  if (used.size < 2) return null;
+  return ps.map((p, i) => {
+    const no = i + 1, crit = t.criteria.filter(c => (c.part || 1) === no), scale = (t.scale || []).filter(x => (x.part || 1) === no);
+    const max = t.mode === 'points' ? sum(crit.map(c => c.points)) : Math.max(0, ...scale.map(x => x.score));
+    return { no, name: p.name || `평가 요소 ${no}`, kind: p.kind || '', crit, scale, max };
+  }).filter(p => p.crit.length);
+}
+function splitTask(course, t) {
+  const ps = partsOf(t); if (!ps || t.classes.length) return 0;
+  const made = ps.map(p => newTask(Object.assign({}, JSON.parse(JSON.stringify(t)), {
+    name: `${t.name}(${p.kind || p.name})`, maxScore: p.max || t.maxScore,
+    criteria: p.crit.map(c => Object.assign({}, c, { part: 1 })), scale: p.scale.map(x => Object.assign({}, x, { part: 1 })),
+    parts: [], splitFrom: t.name, keys: {},
+  })));
+  const i = course.tasks.indexOf(t); course.tasks.splice(i, 1, ...made);
+  return made.length;
+}
+function splitAsk(course, list, done) {
+  modal(`<h2>평가 요소가 나뉜 수행평가가 있어요</h2>
+    <p class="small muted" style="margin:0 0 10px">평가 요소마다 시험지가 따로라면 나눠서 만드는 게 정확해요(정답표·채점이 시험지별로). 나눌 것을 고르세요.</p>
+    ${list.map(t => { const ps = partsOf(t); return `<label class="opt"><input type="checkbox" data-split="${t.id}" checked><span><b>${esc(t.name)}</b> · ${t.maxScore}점<br>
+      ${ps.map(p => `<small>→ ${esc(t.name)}(${esc(p.kind || p.name)}) · 기준 ${p.crit.length}개 · 최고 ${p.max}점</small>`).join('<br>')}</span></label>`; }).join('')}
+    <div class="foot"><button class="btn" id="spno">하나로 두기</button><button class="btn primary" id="spgo">${ic('check')}고른 것 나누기</button></div>`);
+  $('#modal').dataset.lock = '1';
+  const end = () => { delete $('#modal').dataset.lock; closeModal(true); save(true); done && done(); };
+  $('#spno').onclick = end;
+  $('#spgo').onclick = () => {
+    let n = 0; $$('#mbox [data-split]:checked').forEach(cb => { const t = course.tasks.find(x => x.id === cb.dataset.split); if (t) n += splitTask(course, t); });
+    if (n) toast(`평가 요소별로 ${n}개 수행평가를 만들었어요.`, 3000);
+    end();
+  };
+}
+function copyTask(course, t) {
+  const c = newTask(Object.assign({}, JSON.parse(JSON.stringify(t)), { name: t.name + ' 복사본', keys: {} }));
+  course.tasks.splice(course.tasks.indexOf(t) + 1, 0, c); save(true);
+  return c;
 }
 
 /* ================= 과목 화면 ================= */
@@ -525,6 +586,7 @@ function vCourse(cid) {
       <button data-act="renamecourse" data-id="${c.id}">${ic('pen')}이름 바꾸기</button>
       ${c.planText ? `<button data-act="showplan" data-id="${c.id}">${ic('task')}계획서 글 보기</button>` : ''}
       <button data-act="addtask" data-id="${c.id}">${ic('plus')}수행평가 직접 추가</button>
+      ${c.tasks.some(t => partsOf(t) && !t.classes.length) ? `<button data-act="splitask" data-id="${c.id}">${ic('more')}평가 요소별로 나누기</button>` : ''}
       <button class="danger" data-act="delcourse" data-id="${c.id}">${ic('trash')}과목 지우기</button></div></details></div>
   <div class="tks">${c.tasks.map(t => taskCard(t)).join('') || '<div class="empty">수행평가가 없어요.</div>'}</div>
   ${names.length ? `<div class="sec-h" style="margin-top:22px">${ICON.grad}반별 세특 모아보기</div>
@@ -537,18 +599,20 @@ function vTask(tid) {
   crumb([[course.name, '#/c/' + course.id], [t.name + ' 채점 기준']]);
   const crit = t.criteria.map((c, i) => `
     <div class="crit">
-      <div class="no">${i + 1}</div>
+      <div class="no">${i + 1}${partsOf(t) ? `<small class="pno" title="${esc((t.parts[(c.part || 1) - 1] || {}).name || '')}">요소${c.part || 1}</small>` : ''}</div>
       <div><textarea class="in" rows="2" data-f="crit.text" data-i="${i}">${esc(c.text)}</textarea>
       </div>
       <div>${t.mode === 'points' ? `<input class="in" type="number" step="0.5" value="${c.points || 0}" data-f="crit.points" data-i="${i}" title="배점">` : ''}</div>
       <button class="btn sm ghost danger" data-act="delcrit" data-i="${i}" title="지우기">✕</button>
     </div>`).join('');
-  const scale = (t.scale || []).map((s, i) => `<span class="it"><input class="in" type="number" value="${s.count}" data-f="scale.count" data-i="${i}">개 →<input class="in" type="number" step="0.5" value="${s.score}" data-f="scale.score" data-i="${i}">점<button class="btn sm ghost" data-act="delscale" data-i="${i}">✕</button></span>`).join('');
+  const scale = (t.scale || []).map((s, i) => `<span class="it">${partsOf(t) ? `<small class="pno">요소${s.part || 1}</small>` : ''}<input class="in" type="number" value="${s.count}" data-f="scale.count" data-i="${i}">개 →<input class="in" type="number" step="0.5" value="${s.score}" data-f="scale.score" data-i="${i}">점<button class="btn sm ghost" data-act="delscale" data-i="${i}">✕</button></span>`).join('');
   const specials = (t.specials || []).map((s, i) => `<span class="it"><input class="in" style="width:200px" value="${esc(s.label)}" data-f="spec.label" data-i="${i}"><input class="in" type="number" step="0.5" value="${s.score}" data-f="spec.score" data-i="${i}">점<button class="btn sm ghost" data-act="delspec" data-i="${i}">✕</button></span>`).join('');
   after = () => bindTaskInputs(t);
   return `
   <div class="row between" style="margin-bottom:14px"><div class="title">${esc(t.name)} · 채점 기준</div>
-    <div class="row"><button class="btn danger sm" data-act="deltask" data-id="${t.id}">수행평가 지우기</button><a class="btn primary" href="#/c/${course.id}">완료</a></div></div>
+    <div class="row">${partsOf(t) && !t.classes.length ? `<button class="btn sm" data-act="splittask" data-id="${t.id}">${ic('more')}평가 요소별로 나누기</button>` : ''}
+      <button class="btn sm" data-act="copytask" data-id="${t.id}" title="이 채점 기준을 복사해 수행평가를 하나 더 만들어요">${ic('copy')}복사해서 하나 더</button>
+      <button class="btn danger sm" data-act="deltask" data-id="${t.id}">수행평가 지우기</button><a class="btn primary" href="#/c/${course.id}">완료</a></div></div>
   <div class="card">
     <div class="sec-h">${ICON.doc}기본 정보</div>
     <div class="grid2">
@@ -1774,6 +1838,16 @@ const ACT = {
   rot() { G.rot = (G.rot + 90) % 360; rerender(); },
   zoom(el) { const d = Number(el.dataset.d); G.zoom = d ? Math.max(0.4, Math.min(3, G.zoom + d)) : 1; rerender(); },
   maskview() { G.showMask = !G.showMask; rerender(); },
+  splittask(el) {
+    const { course, task } = findTask(el.dataset.id);
+    splitAsk(course, [task], () => { location.hash = '#/c/' + course.id; rerender(); });
+  },
+  splitask(el) { const c = findCourse(el.dataset.id); splitAsk(c, c.tasks.filter(t => partsOf(t) && !t.classes.length), () => rerender()); },
+  copytask(el) {
+    const { course, task } = findTask(el.dataset.id);
+    const c = copyTask(course, task); toast('복사본을 만들었어요. 이름과 채점 기준을 고쳐 쓰세요.', 3000);
+    location.hash = '#/t/' + c.id;
+  },
   why() { G.why = !G.why; try { localStorage.setItem('aigrader-why', G.why ? '1' : '0'); } catch (e) {} rerender(); },
   whyreset(el) { const s = stu(gctx.cls, gctx.no); if (s.creason) delete s.creason[el.dataset.i]; save(); rerender(); },
   qopen(el) {

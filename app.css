@@ -514,3 +514,6 @@ details.aid[open]>summary{margin-bottom:10px}
 .ansbox .ar{display:grid;grid-template-columns:44px 1fr;gap:8px;align-items:start;margin-bottom:6px}
 .ansbox .ar b{padding-top:7px;font-variant-numeric:tabular-nums}
 .ansbox textarea{min-height:44px;font-size:14px}
+
+.pno{display:block;font-size:10.5px;font-weight:600;color:var(--faint);margin-top:2px}
+.scale .it .pno{display:inline;margin:0 2px 0 0}
