@@ -293,8 +293,9 @@ function seteukInfo(task, s, cls, no) {
     const ch = s.touched && a && !!a.met !== ok; if (ch) changed++;
     const q = key && key.crit && key.crit[i] ? key.crit[i].qnos : '';
     const sa = pickA(q).map(x => `${x.no}. ${x.text}`).join(' / ');
+    const qq = key && key.map === 'order' ? (key.answers || []).filter(x => String(x.no).split(/[-(.\s]/)[0] === q).map(x => x.q).filter(Boolean).join(' / ') : '';
     const why = s.creason && s.creason[i] ? ` — 교사 근거: ${s.creason[i]}` : '';
-    return `${i + 1}. ${q ? `[문항 ${q}] ` : ''}${c.text} → ${ok ? '맞음' : '틀림(세특에 쓰지 않음)'}${ch ? ' (교사가 AI 판단을 바꿈 — 교사 판단을 따른다)' : ''}${why}${sa ? `\n   학생 답: ${sa}` : ''}`;
+    return `${i + 1}. ${q ? `[문항 ${q}] ` : ''}${qq ? `${qq} (기준표: ${c.text})` : c.text} → ${ok ? '맞음' : '틀림(세특에 쓰지 않음)'}${ch ? ' (교사가 AI 판단을 바꿈 — 교사 판단을 따른다)' : ''}${why}${sa ? `\n   학생 답: ${sa}` : ''}`;
   });
   L.push(`성취 수준: ${levelOf(task, s)}${s.special != null ? '(특수 상황)' : ''} (채점 기준 ${task.criteria.length}개 중 ${met}개 맞음)`);
   L.push('문항별 최종 판단(교사 판단이 최종). 맞은 문항의 학생 답만 세특의 근거로 쓰고, 틀린 문항의 내용은 잘한 점으로 쓰지 않는다:\n' + rows.join('\n'));
@@ -1360,7 +1361,7 @@ function vGrade(kid, no) {
         ${mine && a && a.reason && s.creason[i] !== a.reason ? `<div class="aiorig"><span>AI: ${esc(a.reason)}</span><button class="lnk" data-act="whyreset" data-i="${i}">AI 것으로</button></div>` : ''}</div>` : '';
     return `<div class="citem"><label class="crow">
       ${task.mode === 'points' ? `<span class="cno">${i + 1}</span>` : `<input type="checkbox" data-act="chk" data-i="${i}" ${checked ? 'checked' : ''}>`}
-      <span class="ct">${task.mode === 'points' ? '' : `<span class="cno">${i + 1}</span>`}${esc(c.text)}${kq(i) ? ` <span class="qtag" title="이 기준은 이 문항의 정답으로 판단해요">문항 ${esc(kq(i))}</span>` : ''}</span>
+      <span class="ct">${task.mode === 'points' ? '' : `<span class="cno">${i + 1}</span>`}${esc(c.text)}${kq(i) ? ` <span class="qtag" title="${esc(((gkey && gkey.answers) || []).filter(x => String(x.no).split(/[-(.\s]/)[0] === kq(i)).map(x => x.q).filter(Boolean).join(' / ') || '이 기준은 이 문항의 정답으로 판단해요')}">문항 ${esc(kq(i))}</span>` : ''}</span>
       <span class="row" style="gap:6px">${a && a.unsure ? `<span class="mark u" title="${esc(a.unsure)} — 직접 확인해 주세요">애매</span>` : ''}${a ? `<span class="mark ${a.met ? 'y' : 'n'}" title="AI 판단">${a.met ? 'AI ✓' : 'AI ✗'}</span>` : ''}${a && s.touched && finalMet(task, s, i) !== !!a.met ? `<span class="mark t" title="선생님 판단이 최종이에요(세특도 이 판단으로)">선생님 ${finalMet(task, s, i) ? '✓' : '✗'}</span>` : ''}
         ${task.mode === 'points' ? `<input class="ptinput" type="number" step="0.5" min="0" max="${c.points}" value="${s.touched ? (s.pts[i] || 0) : ''}" data-act="pt" data-i="${i}"><span class="faint small">/${c.points}</span>` : ''}</span>
     </label>${why}</div>`;
@@ -1508,8 +1509,11 @@ function topNos(key) { const seen = []; ((key && key.answers) || []).forEach(a =
 function orderMap(task, key) {
   const tops = topNos(key);
   if (!task.criteria.length || tops.length !== task.criteria.length) return false;
-  key.crit = task.criteria.map((c, i) => Object.assign({ guide: '' }, (key.crit || [])[i] || {}, { qnos: tops[i] }));
-  key.map = 'order'; return true;
+  const old = key.crit || [];
+  const list = q => String(q || '').split(/[,\s]+/).map(x => x.split(/[-(.]/)[0]).filter(Boolean);
+  const guideFor = q => { const ex = old.find(c => { const l = list(c.qnos); return l.length === 1 && l[0] === q; }) || old.find(c => list(c.qnos).includes(q)); return ex ? ex.guide || '' : ''; };
+  key.crit = task.criteria.map((c, i) => ({ qnos: tops[i], guide: guideFor(tops[i]) }));
+  key.map = 'order'; key.gmap = true; return true;
 }
 function ensureMap(task, k) { if (k && !k.map) { if (!orderMap(task, k)) k.map = 'ai'; save(); } return k; }
 // 학생마다 시험지 형(AI 가 답을 읽을 때 함께 읽거나 선생님이 고름). 없으면 반의 형
@@ -1517,7 +1521,7 @@ function stuForm(cls, no) { const s = cls.students[no]; return s && s.form != nu
 function keyFor(task, cls, no) { const f = stuForm(cls, no); return ensureMap(task, (task.keys || {})[f]) || keyOf(task, cls); }
 function keyFromAI(task, r, from, sample) {
   const k = {
-    answers: (r.answers || []).map(a => ({ no: String(a.no || '').replace(/번/g, '').trim(), q: a.question || '', answer: a.answer || '' })),
+    answers: (r.answers || []).map(a => ({ no: String(a.no || '').replace(/번/g, '').trim(), q: a.question || '', answer: a.answer || '', guide: a.guide || '' })),
     crit: task.criteria.map((c, i) => { const x = (r.criteria || []).find(y => Number(y.index) === i + 1) || {}; return { qnos: String(x.questions || '').replace(/번/g, '').trim(), guide: x.guide || '' }; }),
     checked: false, at: Date.now(), from, sample,
   };
