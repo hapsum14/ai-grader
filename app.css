@@ -97,7 +97,7 @@ body.side-off .side{display:none}
 .hbtn.q{width:36px;padding:0;justify-content:center}
 #keydot{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--bad);box-shadow:0 0 0 2px var(--bg)}
 #keydot.on{display:none}
-main#view{flex:1;padding:24px 32px 90px;min-width:0;max-width:1240px;width:100%}
+main#view{flex:1;padding:24px 32px 90px;min-width:0;max-width:1400px;width:100%}
 
 /* ===== 단추 ===== */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--line2);background:var(--card);font-size:14px;white-space:nowrap;text-decoration:none;color:var(--text)}
@@ -712,3 +712,24 @@ details.aid[open]>summary{margin-bottom:10px}
 .addk.first{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:12px;border:1.5px dashed var(--line2);border-radius:10px;background:none;color:var(--accent);font-weight:600}
 .addk.first:hover{background:var(--accent-soft);border-color:var(--accent)}
 .addk.first .ic{width:15px;height:15px}
+
+/* 넓은 화면: 반 화면 오른쪽에 학생 미리보기, 다른 화면도 너무 좁지 않게 */
+main#view:has(.kcols){max-width:1860px}
+.kpeek{display:none}
+@media (min-width:1480px){
+  .kcols{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:24px;align-items:start}
+  .kpeek{display:block;position:sticky;top:12px;max-height:calc(100vh - 90px);overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;box-shadow:0 4px 18px rgba(20,16,40,.05)}
+  .list .item.stu.peek{background:var(--accent-soft)}
+}
+.kpeek .pk-h{display:flex;align-items:center;gap:8px;font-size:17px}
+.kpeek .pk-sc{font-size:22px;font-weight:800}
+.kpeek .pk-sc small{font-size:13px;font-weight:500;color:var(--muted)}
+.kpeek .pk-sec{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:var(--muted);margin:16px 0 6px}
+.kpeek .pk-crit{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.kpeek .pk-crit li{display:flex;gap:8px;font-size:13px;line-height:1.45;padding:5px 8px;border-radius:8px;background:var(--bg2,#f6f6f8)}
+.kpeek .pk-crit li .m{font-weight:800;flex:none}
+.kpeek .pk-crit li.y .m{color:var(--ok)} .kpeek .pk-crit li.n .m{color:var(--bad)}
+.kpeek .pk-crit small{color:var(--faint)} .kpeek .pk-crit .tch{color:var(--accent);font-weight:700}
+.kpeek .pk-set{font-size:14px;line-height:1.7;white-space:pre-wrap;padding:10px 12px;border:1px solid var(--line);border-radius:10px}
+.kpeek .pk-fb{font-size:13px;line-height:1.6;color:var(--muted)}
+.kpeek .bt.bad{color:var(--bad)}

@@ -599,6 +599,7 @@ function route(opt = {}) {
   $('#keydot').classList.toggle('on', !!App.settings().apiKey);
   closeSheet();
   if (after) after();
+  fillPeek();
 }
 function rerender() { const y = window.scrollY; const side = $('.gside'); const sy = side && side.scrollTop; route({ keepSide: true }); window.scrollTo(0, y); const s2 = $('.gside'); if (s2 && sy != null) s2.scrollTop = sy; }
 window.addEventListener('hashchange', () => { route(); if (!location.hash.startsWith('#/g/')) window.scrollTo(0, 0); });
@@ -1239,7 +1240,7 @@ function vClass(kid) {
     const sc = scoreOf(task, s), aisc = aiScoreOf(task, s);
     const b = s && s.seteuk ? App.bytes(s.seteuk) : 0;
     const sf = s && s.form != null && s.form !== formOf(cls) ? s.form : null;
-    return `<a class="item stu" href="#/g/${cls.id}/${no}">
+    return `<a class="item stu" href="#/g/${cls.id}/${no}" data-no="${no}">
       <span class="no">${no}</span><span>${pillOf(st)}${sf != null ? ` <span class="pill ai" title="반과 다른 시험지 형">${esc(sf || '형 없음')}${sf ? '형' : ''}</span>` : ''}${s && s.formWarn ? ` <span class="pill bad" title="${esc(s.formWarn)}">시험지?</span>` : ''}${s && s.seteuk && s.seteukStale ? ' <span class="pill ai" title="채점 판단을 바꾼 뒤라 세특을 다시 써야 해요">세특 다시</span>' : ''}</span>
       <span class="sc">${sc == null ? '<span class="faint">-</span>' : sc}${aisc != null && aisc !== sc ? `<small class="faint"> AI ${aisc}</small>` : ''}</span>
       <span class="pv">${s && s.seteuk ? esc(s.seteuk) : `<span class="faint">${sub ? '' : '답안 없음'}</span>`}</span>
@@ -1248,7 +1249,7 @@ function vClass(kid) {
   const nextTodo = firstTodo(cls);
   const pct = v => (v / cls.size * 100).toFixed(2) + '%';
   const TABL = { '': '전체', 'AI 채점': '확인 필요' };
-  return `
+  return `<div class="kcols"><div class="kleft">
   <div class="phead">
     <div class="pt"><h1>${esc(cls.name)}</h1><div class="sub">${esc(task.name)} · ${task.maxScore}점${avg ? ` · 평균 ${avg}점` : ''}
       · <a class="lnk" href="#/t/${task.id}" title="채점 기준 보기·고치기">채점 기준</a>
@@ -1287,8 +1288,40 @@ function vClass(kid) {
     <span class="sp"></span>
     <select class="mini" data-act-change="fsort" title="순서"><option value="no" ${F.sort === 'no' ? 'selected' : ''}>번호순</option><option value="score" ${F.sort === 'score' ? 'selected' : ''}>점수순</option><option value="ai" ${F.sort === 'ai' ? 'selected' : ''}>AI 점수순</option></select></div>
   ${F.q ? `<div class="stat">'${esc(F.q)}' 찾는 중 · ${nos.length}명 <button class="btn sm ghost" data-act="fclear">풀기</button></div>` : ''}
-  <div class="list">${rows || '<div class="empty">해당 학생이 없어요.</div>'}</div>`;
+  <div class="list">${rows || '<div class="empty">해당 학생이 없어요.</div>'}</div></div>
+  <aside class="kpeek" id="kpeek" data-kid="${cls.id}" data-first="${nextTodo || nos[0] || ''}"></aside></div>`;
 }
+// 오른쪽 학생 미리보기: 점수 · 문항별 판단 · 세특 전체(목록에서 마우스를 올린 학생)
+function peekHTML(task, cls, no) {
+  const s = cls.students[no] || {}, st = statusOf(cls, no), sc = scoreOf(task, s), ai = aiScoreOf(task, s);
+  const key = s.ai ? keyFor(task, cls, no) : null;
+  const crit = task.criteria.map((c, i) => {
+    const a = s.ai && s.ai.criteria.find(x => x.index === i + 1); if (!a && !s.touched) return '';
+    const ok = finalMet(task, s, i), ch = a && s.touched && ok !== !!a.met;
+    const q = key && key.crit && key.crit[i] ? key.crit[i].qnos : '';
+    return `<li class="${ok ? 'y' : 'n'}"><span class="m">${ok ? '✓' : '✗'}</span><span class="t">${esc(c.text)}${q ? ` <small>문항 ${esc(q)}</small>` : ''}${ch ? ' <small class="tch">선생님</small>' : ''}</span></li>`;
+  }).join('');
+  const b = s.seteuk ? App.bytes(s.seteuk) : 0, set = App.settings();
+  const none = !s.seteuk && s.ai ? noSeteukBasis(task, s) : '';
+  return `<div class="pk-h"><b>${no}번</b>${pillOf(st)}${s.form != null && s.form !== formOf(cls) ? `<span class="pill ai">${esc(s.form || '형 없음')}형</span>` : ''}<span class="sp"></span>
+      <span class="pk-sc">${sc == null ? '-' : sc}<small>/${task.maxScore}</small>${ai != null && ai !== sc ? `<small class="faint"> AI ${ai}</small>` : ''}</span></div>
+    ${crit ? `<div class="pk-sec">채점 기준</div><ul class="pk-crit">${crit}</ul>` : `<p class="small muted">${subOf(cls, no) ? '아직 채점하지 않았어요.' : '답안이 없어요.'}</p>`}
+    <div class="pk-sec">세특 ${s.seteuk ? `<span class="bt ${b > set.byteMax ? 'bad' : ''}">${b}B</span>` : ''}${s.seteukStale ? ' <span class="pill ai">판단이 바뀜 · 다시 쓰기</span>' : ''}<span class="sp"></span>${s.seteuk ? `<button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="세특 복사">${ic('copy')}</button>` : ''}</div>
+    <div class="pk-set">${s.seteuk ? esc(s.seteuk) : `<span class="faint">${esc(none || '아직 세특이 없어요.')}</span>`}</div>
+    ${s.feedback ? `<div class="pk-sec">학생 피드백</div><div class="pk-fb">${esc(s.feedback)}</div>` : ''}
+    <a class="btn primary wide" href="#/g/${cls.id}/${no}" style="margin-top:14px">${ic('play')}${no}번 채점 화면 열기</a>`;
+}
+function fillPeek(no) {
+  const el = document.getElementById('kpeek'); if (!el || getComputedStyle(el).display === 'none') return;
+  const { task, cls } = findClass(el.dataset.kid); if (!cls) return;
+  no = Number(no || el.dataset.no || el.dataset.first); if (!no) { el.innerHTML = ''; return; }
+  if (el.dataset.no === String(no) && el.innerHTML) return;
+  el.dataset.no = no; el.innerHTML = peekHTML(task, cls, no);
+  $$('.list .item.stu').forEach(r => r.classList.toggle('peek', Number(r.dataset.no) === no));
+}
+document.addEventListener('mouseover', e => { const r = e.target.closest && e.target.closest('.kcols .item.stu'); if (r) fillPeek(r.dataset.no); });
+document.addEventListener('focusin', e => { const r = e.target.closest && e.target.closest('.kcols .item.stu'); if (r) fillPeek(r.dataset.no); });
+window.addEventListener('resize', () => fillPeek());
 
 function firstTodo(cls) {
   for (let i = 1; i <= cls.size; i++) { const st = statusOf(cls, i); if (st === '채점 전' || st === 'AI 채점') return i; }
