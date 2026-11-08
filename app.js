@@ -1483,7 +1483,21 @@ const normForm = f => String(f || '').replace(/\s|형|\(|\)/g, '').toUpperCase()
 function formOf(cls) { return normForm(cls && cls.form); }
 function keyOf(task, cls) { return cls && cls.formChecked ? (task.keys || {})[formOf(cls)] || null : null; }
 function sampleSub(task, cls) { const k = cls && cls.subs.length ? cls : task.classes.find(x => x.subs.length); return k ? { k, sub: k.subs[0] } : null; }
-async function makeKeyFor(task, cls) {
+async function makeKeyFor(task, cls, onPhase) {
+  task.keys = task.keys || {};
+  // 같은 형의 정답표가 이미 있으면 그대로 쓴다(반마다 새로 만들지 않음)
+  if (cls.form && task.keys[formOf(cls)]) { cls.formChecked = true; save(); return task.keys[formOf(cls)]; }
+  if (!cls.form && Object.keys(task.keys).length && cls.subs.length) {
+    onPhase && onPhase('시험지 형 확인 중…(몇 초)');
+    const p = cls.pages[cls.subs[0].pages[0]]; const b = p && await getImg(p.id);
+    if (b) {
+      const rects = (cls.masks || []).filter(m => m.page === -1 || m.page === 0);
+      const f = normForm((await AI.detectForm(await Parse.maskedBase64(b, rects, 900))).form);
+      if (task.keys[f]) { cls.form = f; cls.formChecked = true; save(); return task.keys[f]; }
+      if (f) cls.form = f;
+    }
+    onPhase && onPhase('새 형이라 정답표를 만드는 중… (30초 안팎)');
+  }
   const sm = sampleSub(task, cls);
   const imgs = sm ? await aiImages(sm.k, sm.sub) : [];
   const r = await AI.makeKey(task, imgs);
@@ -1721,7 +1735,12 @@ function keyJob(task, cls, then) {
     if (oj) { j.phase = '쪽 방향을 맞추는 중이라 기다려요…'; renderJobs(); await oj.promise; }
     else if (needOrient(cls)) { j.phase = '쪽 방향 확인 중…'; renderJobs(); await autoOrient(cls, m => { j.phase = m; renderJobs(); }).catch(() => 0); cls.oriented = true; }
     j.phase = '시험지 형과 정답표 만드는 중… (30초 안팎)'; renderJobs();
-    const t0 = Date.now(); await makeKeyFor(task, cls);
+    const had = new Set(Object.keys(task.keys || {}));
+    const t0 = Date.now(); const key = await makeKeyFor(task, cls, m => { j.phase = m; renderJobs(); });
+    if (had.has(formOf(cls)) && key && key.checked) { // 이미 확인한 정답표를 다시 씀 → 바로 이어서
+      j.doneMsg = `${formOf(cls) ? formOf(cls) + '형' : '같은 시험지'} 정답표를 그대로 써요`; toast(`${cls.name}: ${j.doneMsg}`, 3000);
+      if (then) then(); return;
+    }
     j.doneMsg = `${Math.round((Date.now() - t0) / 1000)}초 만에 만들었어요 — 확인해 주세요`;
     if (then !== false) {
       j.onBtn = () => { const k = JOBS.indexOf(j); if (k >= 0) JOBS.splice(k, 1); renderJobs(); keyModal(task, cls, then || (() => rerender())); };

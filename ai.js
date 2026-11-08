@@ -422,6 +422,14 @@ const AI = (() => {
     const d = Number(r.rotate); return { rotate: [0, 90, 180, 270].includes(d) ? d : 0 };
   }
 
+  // 시험지 형만 빠르게(이미 만든 정답표를 다시 쓸 수 있는지 볼 때)
+  const FORM_SCHEMA = O({ form: S('시험지에 인쇄된 형 표시(예: A형, B형, 가형). 표시가 없으면 빈칸') });
+  async function detectForm(b64, signal) {
+    if (isMock()) { await sleep(150, signal); return { form: 'C형' }; }
+    return call({ system: '너는 시험지의 형(유형) 표시만 찾는다. 학생 글씨는 읽지 않는다.', parts: [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }, { text: '이 시험지에 인쇄된 형 표시(A형·B형 등)를 찾아 주세요. 없으면 빈칸.' }],
+      schema: FORM_SCHEMA, temperature: 0, signal, think: 'low', _model: MODELS.lite });
+  }
+
   // 2) 읽기: 학생 답을 문항별로 그대로 옮긴다(판단하지 않음)
   const READ_SCHEMA = O({
     answers: A(O({
@@ -576,5 +584,5 @@ const AI = (() => {
     return { text: t, level: '분석', quotes: ['(모의) 1번 학생 답'] };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, onUsage: f => useL.push(f) };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, detectForm, onUsage: f => useL.push(f) };
 })();
