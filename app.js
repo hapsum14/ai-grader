@@ -2328,49 +2328,28 @@ function renderQuota() {
 
 /* ================= 도움말 ================= */
 const HELP = [
-  ['start', '🚀 시작하기', `<div class="hflow">
-    <div class="hf"><i>🔑</i><b>API 키</b><span>설정에 무료 키 넣기<br><a href="${KEY_URL}" target="_blank" rel="noopener">무료 발급 ↗</a></span></div>
-    <div class="hf"><i>📄</i><b>평가계획서</b><span>hwp·pdf 올리면<br>채점 기준이 정리돼요</span></div>
-    <div class="hf"><i>🏫</i><b>반 추가</b><span>답안 스캔 PDF 올리기</span></div>
-    <div class="hf"><i>🙈</i><b>이름 가리기</b><span>학번·이름 칸 덮기</span></div>
-    <div class="hf"><i>🤖</i><b>AI 채점</b><span>점수와 세특이<br>함께 채워져요</span></div>
-    <div class="hf"><i>✅</i><b>확인·완료</b><span>학생마다 보고<br>채점 완료</span></div>
-    <div class="hf"><i>📋</i><b>내보내기</b><span>세특 복사·엑셀</span></div></div>`],
-  ['grade', '🤖 채점', `<ul class="hlist">
-    <li><i>📑</i><div><b>정답표</b> — 첫 답안지로 문항별 정답을 만들어요. 학생 몇 명을 비교해 <b>정답이 하나인 문항 / 학생마다 다른 문항 / 열린 답</b>을 나눠요. 한 번 확인하면 같은 형 반 모두에 써요.</div></li>
-    <li><i>🧭</i><div><b>채점 방향 메모</b> — "물어본 것에 성실히 답하면 정답"처럼 적으면 AI 가 가장 먼저 따라요. (채점 기준 화면 · 다시 채점 창)</div></li>
-    <li><i>⚖️</i><div><b>관대 · 보통 · 엄격</b> — 답이 얼마나 맞아야 ✓ 인지 정해요.</div></li>
-    <li><i>✍️</i><div><b>선생님 판단이 최종</b> — 체크를 바꾸면 점수와 세특이 그 판단을 따라요. <span class="mark t">선생님 ✓</span> 로 보여요.</div></li>
-    <li><i>🔍</i><div><b>잘못 읽었을 때</b> — 'AI 가 읽은 글'에서 고치고 <b>다시 판단</b>.</div></li>
-    <li><i>🔤</i><div><b>시험지 형</b> — 학생마다 A·B형을 읽어 그 형의 정답표로 채점해요.</div></li>
-    <li><i>⏳</i><div>오래 걸리는 일은 <b>오른쪽 아래</b>에서 돌아가요. 그동안 다른 일을 해도 돼요.</div></li></ul>`],
-  ['seteuk', '✨ 세특', `<ul class="hlist">
-    <li><i>⚡</i><div><b>채점하면 바로</b> 세특 칸이 채워져요(약 250~300바이트, '○○ 활동에서는 …함.').</div></li>
-    <li><i>📝</i><div>학생이 <b>실제로 쓴 내용만</b> 써요. 백지면 세특을 쓰지 않아요.</div></li>
-    <li><i>🔄</i><div>판단을 바꾸면 <span class="pill ai">세특 다시</span> 표시 → <b>채점 완료</b>를 누르면 바뀐 판단대로 다시 써요.</div></li>
-    <li><i>👀</i><div><b>관찰 메모</b>를 적으면 더 개별화돼요. 직접 고친 세특은 다시 채점해도 그대로 둬요.</div></li></ul>`],
-  ['pages', '🗂️ 답안 나누기', `<ul class="hlist">
-    <li><i>✋</i><div>쪽을 <b>끌어서</b> 옮겨요. 여러 쪽은 네모(또는 Ctrl·Shift)로 골라 함께.</div></li>
-    <li><i>➡️</i><div>쪽의 <b>오른쪽</b>에 놓으면 그 학생에 붙고, 학생 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생.</div></li>
-    <li><i>🔃</i><div>쪽마다 <b>↻</b>, 전체는 <b>쪽 방향</b> 줄에서. 올리면 방향을 자동으로 맞춰요.</div></li>
-    <li><i>🗑️</i><div>고른 쪽 <b>지우기</b>, ⋯ 에서 <b>파일 바꾸기 · 그림 모두 지우기</b>.</div></li></ul>`],
-  ['key', '🔑 API 키', `<ol class="hsteps">
-    <li><a href="${KEY_URL}" target="_blank" rel="noopener"><b>Google AI Studio ↗</b></a> 에 구글 계정으로 들어가기</li>
-    <li><b>Create API key</b> 누르기</li>
-    <li><code>AIza…</code> 로 시작하는 키를 복사해 <b>⚙️ 설정</b>에 붙여 넣기</li></ol>
-    <p class="small muted">💡 무료 키는 하루 한도가 있어요. 넘으면 다른 모델로 이어 가고, 한국 시각 오후 5시에 다시 채워져요.</p>`],
-  ['save', '💾 저장·되돌리기', `<ul class="hlist">
-    <li><i>💻</i><div>기록은 <b>이 브라우저</b>에 저장돼요. <b>구글 로그인</b>하면 내 드라이브에도 저장돼 다른 컴퓨터에서 이어 해요.</div></li>
-    <li><i>↩️</i><div>지우기·옮기기·합치기는 위쪽 <b>↶ 되돌리기</b>(Ctrl+Z)로 되돌려요.</div></li>
-    <li><i>🔒</i><div>AI 를 쓸 때만, <b>이름을 가린</b> 답안이 Google Gemini 로 가요.</div></li></ul>`],
-  ['keys', '⌨️ 단축키', `<div class="kgrid">
+  ['start', '시작하기', `<ol class="hsteps">
+    <li><b>설정</b>에 Gemini API 키 넣기 <a href="${KEY_URL}" target="_blank" rel="noopener">무료 발급 ↗</a></li>
+    <li><b>평가계획서 올리기</b> → 채점 기준이 정리됨</li>
+    <li>수행평가 카드의 <b>반 추가</b> → 답안 PDF 올리기</li>
+    <li><b>이름 칸 가리기</b> → <b>AI 채점</b> (세특도 함께 써짐)</li>
+    <li>학생마다 확인하고 <b>채점 완료</b> → 세특 복사·엑셀</li></ol>`],
+  ['grade', '채점·세특', `<ul>
+    <li><b>정답표</b>: 첫 AI 채점 때 만들어져요. 한 번 확인하면 같은 형 반에 모두 쓰여요.</li>
+    <li><b>채점 방향 메모</b>: 채점 기준 화면에 적으면 AI 가 가장 먼저 따라요.</li>
+    <li><b>선생님 판단이 최종</b>: 체크를 바꾸고 채점 완료를 누르면 세특도 그대로 다시 써요.</li>
+    <li><b>잘못 읽었을 때</b>: 'AI 가 읽은 글'에서 고치고 <b>다시 판단</b>.</li></ul>`],
+  ['pages', '답안 나누기', `<ul>
+    <li>쪽을 <b>끌어서</b> 옮기기 — 여러 쪽은 네모(Ctrl·Shift)로 골라서.</li>
+    <li>쪽의 <b>오른쪽</b>에 놓으면 그 학생에, 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생으로.</li>
+    <li>방향은 <b>↻</b>, 파일 바꾸기·지우기는 <b>⋯</b>.</li></ul>`],
+  ['keys', '단축키', `<div class="kgrid">
     <span><span class="kbd">←</span><span class="kbd">→</span></span><span>이전·다음 학생</span>
     <span><span class="kbd">1</span>~<span class="kbd">9</span></span><span>기준 체크</span>
     <span><span class="kbd">Ctrl</span>+<span class="kbd">Enter</span></span><span>채점 완료 후 다음</span>
-    <span><span class="kbd">Ctrl</span>+<span class="kbd">Z</span> / <span class="kbd">Y</span></span><span>되돌리기 / 다시 하기</span>
-    <span><span class="kbd">Esc</span></span><span>목록으로</span>
-    <span><span class="kbd">/</span></span><span>찾기</span>
-    <span><span class="kbd">?</span></span><span>도움말</span></div>`],
+    <span><span class="kbd">Ctrl</span>+<span class="kbd">Z</span></span><span>되돌리기</span>
+    <span><span class="kbd">/</span></span><span>찾기</span></div>
+    <p class="small muted" style="margin-top:12px">기록은 이 브라우저에 저장돼요. 구글 로그인하면 다른 컴퓨터에서도 이어 할 수 있어요.</p>`],
 ];
 
 function helpModal(sec) {
