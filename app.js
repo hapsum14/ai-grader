@@ -1659,10 +1659,16 @@ function keyModal(task, cls, then, form) {
   const sm = smk && subOf(smk, key.sample.no) ? { k: smk, sub: subOf(smk, key.sample.no) } : sampleSub(task, cls);
   const pages = sm ? sm.sub.pages.map(pi => sm.k.pages[pi]) : [];
   const TY = { fixed: '정답 하나', student: '학생 조건에 따라', open: '열린 답' };
-  const ansRow = (a, i) => `<div class="kr"><input class="in kno" data-kno="${i}" value="${esc(a.no)}" title="문항"><textarea class="in kans" rows="1" data-kans="${i}" placeholder="${a.type && a.type !== 'fixed' ? '예시 답(한 학생 것)' : '정답'}">${esc(a.answer)}</textarea><button class="ibtn" data-kdel="${i}" title="이 문항 지우기">${ic('trash')}</button>
-    <div class="ktype"><select class="in sm kty ${a.type && a.type !== 'fixed' ? 'on' : ''}" title="이 문항의 정답 구조">${Object.entries(TY).map(([v, l]) => `<option value="${v}" ${(a.type || 'fixed') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <input class="in krule ${a.type && a.type !== 'fixed' ? '' : 'hide'}" value="${esc(a.rule || '')}" placeholder="${a.type === 'open' ? '꼭 들어갈 요소' : '판단 규칙: 학생이 적은 조건·관찰에서 결론을 어떻게 끌어내면 맞는지'}">
-      ${a.why ? `<small class="faint kwhy">${esc(a.why)}</small>` : ''}</div></div>`;
+  const nonFixed = a => a.type && a.type !== 'fixed';
+  const rowsFor = t => Math.min(8, Math.max(2, Math.ceil(String(t || '').length / 46) + (String(t || '').match(/\n/g) || []).length));
+  const ansRow = (a, i) => `<div class="kr ${nonFixed(a) ? 'nf' : ''}">
+    <div class="krh"><input class="in kno" data-kno="${i}" value="${esc(a.no)}" title="문항 이름(시험지 칸 이름)" placeholder="문항">
+      <select class="in kty ${nonFixed(a) ? 'on' : ''}" title="이 문항의 정답 구조">${Object.entries(TY).map(([v, l]) => `<option value="${v}" ${(a.type || 'fixed') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <span class="sp"></span><button class="ibtn" data-kdel="${i}" title="이 문항 지우기">${ic('trash')}</button></div>
+    ${a.q ? `<div class="kq">${esc(a.q)}</div>` : ''}
+    <textarea class="in kans" rows="${rowsFor(a.answer)}" data-kans="${i}" placeholder="${nonFixed(a) ? '예시 답(한 학생 것)' : '정답'}">${esc(a.answer)}</textarea>
+    <div class="krw ${nonFixed(a) ? '' : 'hide'}"><span class="krl">${a.type === 'open' ? '꼭 들어갈 요소' : '판단 규칙'}</span><input class="in krule" value="${esc(a.rule || '')}" placeholder="${a.type === 'open' ? '예) 근거 1가지 이상, 자기 의견' : '예) 학생이 적은 조건·관찰에서 결론을 올바르게 끌어냈는지'}"></div>
+    ${a.why ? `<div class="kwhy">${esc(a.why)}</div>` : ''}</div>`;
   const others = task.classes.filter(k => k !== cls && k.formChecked && formOf(k) === formOf(cls)).map(k => k.name);
   const kf = byForm ? form : formOf(cls);
   modal(`<h2>정답표 확인 <span class="pill">${kf ? esc(kf) + '형' : '형 표시 없음'}</span></h2>
@@ -1677,10 +1683,15 @@ function keyModal(task, cls, then, form) {
         <div class="sec-h" style="margin:14px 0 6px">채점 기준 ↔ 문항 <span class="sp"></span><button class="lnk" id="kord" type="button">문항 순서대로 1:1</button></div>
         <p class="small ${key.map === 'order' ? 'faint' : 'muted'}" style="margin:0 0 6px">${key.map === 'order' ? `기준 ${task.criteria.length}개 = 문항 ${topNos(key).length}개라 순서대로 맞췄어요. 판단은 각 문항의 정답으로 하고, 기준 문장은 참고예요.` : key.map === 'teacher' ? '선생님이 정한 대응이에요.' : `기준 ${task.criteria.length}개, 문항 ${topNos(key).length}개라 AI 가 내용으로 짐작했어요. 맞는지 확인해 주세요.`}</p>
         <div class="maptb">${task.criteria.map((c, i) => `<div class="mr"><span class="mi">${i + 1}</span><span class="mt">${esc(c.text)}</span>
-          <label class="mq"><input class="in" data-mi="${i}" value="${esc((key.crit[i] || {}).qnos || '')}" placeholder="예: 3">번</label></div>`).join('')}</div>
+          <label class="mq"><span class="small faint">문항</span><input class="in" data-mi="${i}" value="${esc((key.crit[i] || {}).qnos || '')}" placeholder="예: 3" title="${esc((key.crit[i] || {}).qnos || '')}"></label></div>`).join('')}</div>
       </div>
     </div>
     <div class="foot"><button class="btn" data-act="close">닫기</button>${then ? '<button class="btn" id="kskip">확인 없이 채점</button>' : ''}<button class="btn primary" id="kok">${ic('check')}${then ? '확인하고 채점' : '확인함'}</button></div>`, true);
+  $('#mbox').classList.add('kbox');
+  // 정답 칸은 글이 길어지면 저절로 늘어난다
+  const grow = t => { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 260) + 'px'; };
+  $$('#mbox .kans').forEach(grow);
+  $('#mbox').addEventListener('input', e => { if (e.target.matches('.kans')) grow(e.target); });
   const show = async j => { $$('#mbox [data-pg]').forEach(b => b.classList.toggle('on', Number(b.dataset.pg) === j)); const im = $('#mapimg'); if (im) im.src = await imgURL(pages[j].id); };
   if (pages.length) { $$('#mbox [data-pg]').forEach(b => b.onclick = () => show(Number(b.dataset.pg))); show(0); }
   const collect = () => {
@@ -1707,7 +1718,7 @@ function keyModal(task, cls, then, form) {
     try { await classifyKey(task, key, sm ? sm.k : cls); save(); toast(`학생 ${key.typed || 0}명의 답을 비교해 유형을 정했어요.`); keyModal(task, cls, then, form); }
     catch (e) { toast('유형을 정하지 못했어요: ' + e.message, 4500); b.disabled = false; b.textContent = '유형 자동으로 정하기'; }
   };
-  $('#ktb').onchange = e => { const t = e.target.closest('.kty'); if (!t) return; const r = t.closest('.kr'); const ru = $('.krule', r); ru.classList.toggle('hide', t.value === 'fixed'); t.classList.toggle('on', t.value !== 'fixed'); ru.placeholder = t.value === 'open' ? '꼭 들어갈 요소' : '판단 규칙: 학생이 적은 조건·관찰에서 결론을 어떻게 끌어내면 맞는지'; if (t.value !== 'fixed') ru.focus(); };
+  $('#ktb').onchange = e => { const t = e.target.closest('.kty'); if (!t) return; const r = t.closest('.kr'); const ru = $('.krule', r); ru.closest('.krw').classList.toggle('hide', t.value === 'fixed'); $('.krl', r).textContent = t.value === 'open' ? '꼭 들어갈 요소' : '판단 규칙'; t.classList.toggle('on', t.value !== 'fixed'); r.classList.toggle('nf', t.value !== 'fixed'); ru.placeholder = t.value === 'open' ? '꼭 들어갈 요소' : '판단 규칙: 학생이 적은 조건·관찰에서 결론을 어떻게 끌어내면 맞는지'; if (t.value !== 'fixed') ru.focus(); };
   $('#ktb').onclick = e => { const d = e.target.closest('[data-kdel]'); if (d) d.closest('.kr').remove(); };
   $('#kok').onclick = () => { collect(); (byForm ? key : (keyOf(task, cls) || key)).checked = true; save(); closeModal(true); if (then) then(); else { rerender(); toast('정답표를 확인했어요. 다음 AI 채점부터 적용돼요.'); } };
   if (then) $('#kskip').onclick = () => { collect(); closeModal(true); then(); };
