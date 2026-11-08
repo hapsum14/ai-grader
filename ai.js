@@ -18,7 +18,12 @@ const AI = (() => {
   const RPM = { 'flash-lite': 14, flash: 9, pro: 4 };          // 무료 한도보다 조금 낮게
   const sent = {};
   const UK = 'aigrader-usage', useL = [];
-  const today = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+  // 하루 한도는 미국 태평양 시각(로스앤젤레스) 자정에 다시 채워진다. 오늘 쓴 양도 그 날짜로 센다
+  const PT = { timeZone: 'America/Los_Angeles', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' };
+  function ptParts(d) { const o = {}; new Intl.DateTimeFormat('en-US', PT).formatToParts(d || new Date()).forEach(p => { o[p.type] = Number(p.value); }); return o; }
+  const today = () => { const p = ptParts(); return `${p.year}-${p.month}-${p.day}`; };
+  // 다음 초기화 시각(내 기기 시각의 Date)
+  function resetAt() { const now = new Date(), p = ptParts(now); const left = ((24 - p.hour) * 3600 - p.minute * 60 - p.second) * 1000; return new Date(Math.round((now.getTime() + left) / 60000) * 60000); }
   function usageToday() { let u = null; try { u = JSON.parse(localStorage.getItem(UK) || 'null'); } catch (e) {} if (!u || u.day !== today()) u = { day: today(), m: {} }; return u; }
   function useSave(u, ev) { try { localStorage.setItem(UK, JSON.stringify(u)); } catch (e) {} useL.forEach(f => { try { f(u, ev); } catch (e) {} }); }
   const tierName = m => { const d = describe(m); return d.tier === 'flash-lite' ? 'Flash-Lite' : d.tier === 'pro' ? 'Pro' : d.tier === 'flash' ? 'Flash' : m; };
@@ -562,5 +567,5 @@ const AI = (() => {
     return { text: t, level: '분석', quotes: ['(모의) 1번 학생 답'] };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, onUsage: f => useL.push(f) };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, onUsage: f => useL.push(f) };
 })();

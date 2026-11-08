@@ -343,19 +343,32 @@ function classCounts(cls) {
   return n;
 }
 function doneCount(cls) { const n = classCounts(cls); return n['채점 완료'] + n['미제출'] + n['미응시']; }
+function courseMeta(c) {
+  const y = String(c.year || '').replace(/학년도/g, '').trim(), g = String(c.grade || '').replace(/학년/g, '').trim(), m = String(c.semester || '').replace(/학기/g, '').trim();
+  return [y && y + '학년도', g && g + '학년', m && m + '학기'].filter(Boolean).join(' ');
+}
+// 왼쪽 메뉴 펼침 상태(과목·수행평가마다). 지금 보는 과목·수행평가는 늘 펼친다
+function treeOpen() { try { return JSON.parse(localStorage.getItem('aigrader-tree') || '{}'); } catch (e) { return {}; } }
 function matchQ(...texts) { const q = F.q.trim().toLowerCase(); if (!q) return true; return texts.some(t => String(t || '').toLowerCase().includes(q)); }
 
 function renderSide() {
   const ctx = curCtx(), open = sideOpen();
   const nStu = sum(S.courses.flatMap(c => c.tasks.flatMap(t => t.classes.map(k => k.size))));
+  const to = treeOpen();
+  const isOpen = (id, cur) => cur || to[id] === true;
+  const chev = (id, open, has) => has ? `<button class="tg ${open ? 'open' : ''}" data-act="tree" data-id="${id}" title="${open ? '접기' : '펴기'}">${ic('chev')}</button>` : '<span class="tg"></span>';
   const tree = S.courses.map(c => {
-    const tasks = c.tasks.map(t => {
-      const cls = t.classes.map(k => `<a class="subj l2 ${ctx.cls === k ? 'on' : ''}" href="#/k/${k.id}"><span class="nm">${esc(k.name)}</span><b>${doneCount(k)}/${k.size}</b></a>`).join('');
-      const tOn = ctx.task === t && !ctx.cls;
-      return `<a class="subj l1 ${tOn ? 'on' : ''}" href="#/t/${t.id}" title="채점 기준">${ic('task')}<span class="nm">${esc(t.name)}</span><b>${t.classes.length ? t.classes.length + '반' : ''}</b></a>${cls}<button class="subj l2 addk2" data-act="addclass" data-id="${t.id}">+ 반 추가</button>`;
-    }).join('');
-    const cOn = ctx.kind === 'c' && ctx.course === c;
-    return `<a class="subj ${cOn ? 'on' : ''}" href="#/c/${c.id}">${ic('book')}<span class="nm">${esc(c.name)}</span><b>${c.tasks.length}</b></a>${tasks}`;
+    const cCur = ctx.course === c;
+    const cOpen = isOpen(c.id, cCur);
+    const tasks = cOpen ? c.tasks.map(t => {
+      const tCur = ctx.task === t;
+      const tOpen = isOpen(t.id, tCur);
+      const cls = tOpen ? t.classes.map(k => `<a class="subj l2 ${ctx.cls === k ? 'on' : ''}" href="#/k/${k.id}"><span class="nm">${esc(k.name)}</span><b>${doneCount(k)}/${k.size}</b></a>`).join('') + `<button class="subj l2 addk2" data-act="addclass" data-id="${t.id}">+ 반 추가</button>` : '';
+      const tOn = tCur && !ctx.cls;
+      return `<div class="trow l1">${chev(t.id, tOpen, true)}<a class="subj ${tOn ? 'on' : ''}" href="#/t/${t.id}" title="채점 기준"><span class="nm">${esc(t.name)}</span><b>${t.classes.length ? t.classes.length + '반' : ''}</b></a></div>${cls}`;
+    }).join('') : '';
+    const cOn = ctx.kind === 'c' && cCur;
+    return `<div class="trow">${chev(c.id, cOpen, c.tasks.length)}<a class="subj ${cOn ? 'on' : ''}" href="#/c/${c.id}">${ic('book')}<span class="nm">${esc(c.name)}</span><b>${c.tasks.length}</b></a></div>${tasks}`;
   }).join('');
   const cls = ctx.cls;
   const cnt = cls ? classCounts(cls) : null;
@@ -461,7 +474,7 @@ function vHome() {
   const groups = S.courses.map(c => {
     const tasks = c.tasks.filter(t => matchQ(c.name, t.name, ...t.classes.map(k => k.name)));
     if (!tasks.length && !matchQ(c.name)) return '';
-    const meta = [c.year && c.year + '학년도', c.grade && c.grade + '학년', c.semester && c.semester + '학기'].filter(Boolean).join(' ');
+    const meta = courseMeta(c);
     return `<section class="cgroup"><div class="cg-h"><a href="#/c/${c.id}">${esc(c.name)}</a><span>${esc(meta)}</span></div>
       <div class="tks">${tasks.map(t => taskCard(t)).join('')}</div></section>`;
   }).join('');
@@ -479,9 +492,16 @@ function taskCard(t) {
       <span class="mbar"><i class="d" style="width:${d / k.size * 100}%"></i><i class="a" style="width:${n['AI 채점'] / k.size * 100}%"></i></span>
       <span class="kc">${d}/${k.size}</span>${n['AI 채점'] ? `<span class="pill ai" title="AI 가 채점, 선생님 확인 필요">확인 ${n['AI 채점']}</span>` : ''}</a>`;
   }).join('');
-  return `<div class="tk">
-    <div class="tk-h"><div><div class="tk-t">${esc(t.name)}</div><div class="tk-m">${t.maxScore}점 · 기준 ${t.criteria.length}개</div></div>
-      <a class="ibtn" href="#/t/${t.id}" title="채점 기준 보기·고치기">${ic('task')}</a></div>
+  return `<div class="tk" data-tk="${t.id}">
+    <div class="tk-h"><div><div class="tk-t" title="두 번 누르면 이름 바꾸기" data-ren="${t.id}">${esc(t.name)}</div><div class="tk-m">${t.maxScore}점 · 기준 ${t.criteria.length}개${t.splitFrom ? ` · ${esc(t.splitFrom)}에서 나눔` : ''}</div></div>
+      <a class="ibtn" href="#/t/${t.id}" title="채점 기준 보기·고치기">${ic('task')}</a>
+      <details class="menu"><summary class="ibtn" title="더 보기">${ic('more')}</summary><div class="mlist">
+        <a href="#/t/${t.id}">${ic('task')}채점 기준 보기·고치기</a>
+        <button data-act="renametask" data-id="${t.id}">${ic('pen')}이름 바꾸기</button>
+        <button data-act="copytask" data-id="${t.id}" data-stay="1">${ic('copy')}복사해서 하나 더</button>
+        ${partsOf(t) && !t.classes.length ? `<button data-act="splittask" data-id="${t.id}" data-stay="1">${ic('more')}평가 요소별로 나누기</button>` : ''}
+        <button data-act="addclass" data-id="${t.id}">${ic('plus')}반 추가</button>
+        <button class="danger" data-act="deltask" data-id="${t.id}" data-stay="1">${ic('trash')}수행평가 지우기</button></div></details></div>
     ${ks || '<div class="tk-empty">답안을 올릴 반을 추가하세요</div>'}
     <button class="addk" data-act="addclass" data-id="${t.id}">+ 반 추가</button></div>`;
 }
@@ -587,7 +607,7 @@ function vCourse(cid) {
   const c = findCourse(cid); if (!c) return '<div class="card empty">과목을 찾을 수 없습니다. <a href="#/">처음으로</a></div>';
   crumb([[c.name]]);
   const names = [...new Set(c.tasks.flatMap(t => t.classes.map(k => k.name)))];
-  const meta = [c.year && c.year + '학년도', c.grade && c.grade + '학년', c.semester && c.semester + '학기'].filter(Boolean).join(' ');
+  const meta = courseMeta(c);
   return `
   <div class="phead"><div class="pt"><h1>${esc(c.name)}</h1><div class="sub">${esc(meta)}</div></div>
     <details class="menu"><summary class="btn">${ic('more')}</summary><div class="mlist">
@@ -596,7 +616,7 @@ function vCourse(cid) {
       <button data-act="addtask" data-id="${c.id}">${ic('plus')}수행평가 직접 추가</button>
       ${c.tasks.some(t => partsOf(t) && !t.classes.length) ? `<button data-act="splitask" data-id="${c.id}">${ic('more')}평가 요소별로 나누기</button>` : ''}
       <button class="danger" data-act="delcourse" data-id="${c.id}">${ic('trash')}과목 지우기</button></div></details></div>
-  <div class="tks">${c.tasks.map(t => taskCard(t)).join('') || '<div class="empty">수행평가가 없어요.</div>'}</div>
+  <div class="tks">${c.tasks.map(t => taskCard(t)).join('')}<button class="tk tk-add" data-act="addtask" data-id="${c.id}">${ic('plus')}<b>수행평가 추가</b><span>빈 채점 기준으로 새로 만들기</span></button></div>
   ${names.length ? `<div class="sec-h" style="margin-top:22px">${ICON.grad}반별 세특 모아보기</div>
     <div class="row">${names.map(n => `<a class="btn sm" href="#/s/${c.id}/${encodeURIComponent(n)}">${esc(n)}</a>`).join('')}</div>` : ''}`;
 }
@@ -915,7 +935,9 @@ function vClass(kid) {
       <button data-act="regrade" data-id="${cls.id}">${ic('bot')}AI 채점 다시…</button>
       <button data-act="reseteuk" data-id="${cls.id}">${ICON.wand}세특 다시 쓰기…</button>
       <button data-act="copyall" data-id="${cls.id}">${ic('copy')}세특 모두 복사</button>
-      <button data-act="xlsx" data-id="${cls.id}">${ic('down')}엑셀로 내보내기</button></div></details>
+      <button data-act="xlsx" data-id="${cls.id}">${ic('down')}엑셀로 내보내기</button>
+      <button data-act="renameclass" data-id="${cls.id}">${ic('pen')}반 이름 바꾸기</button>
+      <button class="danger" data-act="delclass" data-id="${cls.id}">${ic('trash')}반 지우기</button></div></details>
   </div>
   <div class="tabs">${STATUS.map(([v, l]) => `<button class="tab ${F.status === v ? 'on' : ''}" data-act="fstatus" data-v="${esc(v)}">${TABL[v] || l}<b>${n[v]}</b></button>`).join('')}
     <span class="sp"></span>
@@ -1463,7 +1485,7 @@ function settingsModal() {
       <label class="f">채점 방식</label>
       <div class="row"><span class="seg" id="smode">${[['auto', '자동(무료 추천)'], ['accurate', '정확하게'], ['fast', '빠르게']].map(([m, l]) => `<button data-m="${m}" class="${(s.mode || 'auto') === m ? 'on' : ''}">${l}</button>`).join('')}</span></div>
       <p class="small muted" id="smodenote" style="margin:6px 0 0"></p>
-      <label class="f">오늘 사용량 <a href="https://ai.google.dev/gemini-api/docs/rate-limits" target="_blank" rel="noopener">무료 한도 안내 ↗</a></label>
+      <label class="f">오늘 사용량 <button class="lnk" data-act="quotahelp">무료 한도 안내</button></label>
       <div id="susage">${usageHTML()}</div>
       <details style="margin-top:8px"><summary class="small muted" style="cursor:pointer">모델 직접 고르기 <span class="faint">— '빠르게'와 계획서 분석에 씀</span></summary>
         <div class="row" style="flex-wrap:nowrap;margin-top:6px"><select class="in" id="smodel">${modelOptions(cachedModels(), s.model)}</select><button class="btn sm" id="stest" title="키가 맞는지 보고 쓸 수 있는 모델을 새로 불러옵니다">확인</button></div>
@@ -1540,7 +1562,32 @@ function usageHTML() {
   const u = AI.usageToday(); const rows = Object.entries(u.m);
   if (!rows.length) return '<p class="small muted" style="margin:0">오늘은 아직 쓰지 않았어요.</p>';
   return `<div class="usage">${rows.map(([k, x]) => `<div class="ur"><b>${esc(k)}</b><span>${x.n}회</span><span class="faint">${Math.round((x.tin + x.tout) / 1000)}천 토큰</span>${x.limit === 'day' ? '<span class="pill bad">오늘 한도 다 씀</span>' : x.limit === 'minute' ? '<span class="pill ai">분당 한도 — 잠깐 기다리는 중</span>' : '<span class="pill ok">여유</span>'}</div>`).join('')}</div>
-    <p class="small faint" style="margin:6px 0 0">무료 한도는 Google 이 모델마다 정해요(분당·하루). 하루 한도를 넘으면 다른 모델로 저절로 바꿔 이어 가요. 한도는 매일 다시 채워져요.</p>`;
+    <p class="small faint" style="margin:6px 0 0">하루 한도는 <b>${resetText()}</b>에 다시 채워져요. 넘으면 다른 모델로 저절로 바꿔 이어 가요.</p>`;
+}
+// 다음 초기화 시각: '오늘 오후 5:00 (3시간 20분 뒤)'
+function resetText() {
+  const at = AI.resetAt(), left = Math.max(0, at - Date.now());
+  const same = at.toDateString() === new Date().toDateString();
+  const hm = at.toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
+  const h = Math.floor(left / 3600000), m = Math.round(left % 3600000 / 60000);
+  return `${same ? '오늘' : '내일'} ${hm}(${h ? h + '시간 ' : ''}${m}분 뒤)`;
+}
+// 무료 한도를 쉽게 풀어 쓴 안내
+function quotaHelp(back) {
+  const u = AI.usageToday(); const rows = Object.entries(u.m);
+  const day = rows.filter(([, x]) => x.limit === 'day').map(([k]) => k);
+  modal(`<h2>무료 한도 안내</h2>
+    ${day.length ? `<div class="qh-now bad"><b>${esc(day.join('·'))}</b> 오늘 한도를 다 썼어요. <b>${resetText()}</b>에 다시 채워져요. 그 전까지는 다른 모델로 이어 가요.</div>`
+      : `<div class="qh-now">지금은 여유가 있어요. 다음 초기화: <b>${resetText()}</b></div>`}
+    <div class="qh">
+      <div class="qhr"><b>한도는 두 가지</b><span><b>분당</b>: 1분에 보낼 수 있는 요청 수 — 넘으면 1분 안에 저절로 풀려요(앱이 기다렸다 이어 감).<br><b>하루</b>: 하루에 보낼 수 있는 요청 수 — 넘으면 다음 초기화 때까지 그 모델은 쉬어요.</span></div>
+      <div class="qhr"><b>언제 다시 채워지나</b><span>하루 한도는 미국 태평양 시각 자정에 초기화돼요. 한국 시각으로 <b>오후 5시</b>(3~11월 초 서머타임 때는 <b>오후 4시</b>)예요.</span></div>
+      <div class="qhr"><b>얼마나 쓰나</b><span>학생 1명 채점 = 요청 약 2번(답 읽기 1 + 판단 1), 세특 1명 = 1번. 계획서 읽기 = 1~2번.<br>무료 한도는 모델마다 하루 수백~천 번 안팎이라 보통 한 반(30명 안팎)은 넉넉해요.</span></div>
+      <div class="qhr"><b>넘으면 어떻게</b><span>앱이 Flash ↔ Flash-Lite 로 저절로 바꿔 이어 가요. 둘 다 다 쓰면 초기화 뒤 남은 학생만 이어서 하면 돼요(한 결과는 저장돼 있어요).</span></div>
+      <div class="qhr"><b>한도를 늘리려면</b><span>Google AI Studio 에서 결제(유료)를 등록하면 크게 늘어나요. 무료로 쓸 때는 필요 없어요.</span></div>
+    </div>
+    <p class="small faint" style="margin:10px 0 0">정확한 숫자는 Google 이 모델·계정마다 정하고 바꿀 수 있어요. <a href="https://aistudio.google.com/docs/rate-limits" target="_blank" rel="noopener">Google 원문 ↗</a></p>
+    <div class="foot">${back ? '<button class="btn" data-act="settings">← 설정으로</button>' : ''}<button class="btn primary" data-act="close">알겠어요</button></div>`);
 }
 function renderQuota() {
   const b = $('#quota'); if (!b || typeof AI === 'undefined') return;
@@ -1549,7 +1596,8 @@ function renderQuota() {
   const n = rows.reduce((t, [, x]) => t + x.n, 0);
   b.classList.toggle('hide', !n); b.classList.toggle('warn', !!(day.length || min.length));
   b.innerHTML = `${ic('bot')}<span class="lb">${day.length ? `${day.join('·')} 한도 다 씀` : min.length ? '분당 한도 대기' : `오늘 ${n}회`}</span>`;
-  b.title = rows.map(([k, x]) => `${k}: ${x.n}회${x.limit === 'day' ? ' (오늘 한도 다 씀)' : ''}`).join('\n') + '\n누르면 자세히';
+  b.title = rows.map(([k, x]) => `${k}: ${x.n}회${x.limit === 'day' ? ' (오늘 한도 다 씀)' : ''}`).join('\n') + `\n초기화: ${resetText()}\n누르면 무료 한도 안내`;
+  if (day.length) b.querySelector('.lb').textContent = `${day.join('·')} 한도 다 씀 · ${resetText().replace(/\(.*\)/, '')} 초기화`;
 }
 
 /* ================= 도움말 ================= */
@@ -1705,7 +1753,8 @@ const ACT = {
     const { course, task } = findTask(el.dataset.id);
     if (!confirm(`'${task.name}' 수행평가와 그 채점 기록을 지울까요?`)) return;
     task.classes.forEach(k => delImgs(k.id + ':'));
-    course.tasks = course.tasks.filter(t => t !== task); save(); location.hash = '#/c/' + course.id;
+    course.tasks = course.tasks.filter(t => t !== task); save();
+    if (el.dataset.stay && !location.hash.startsWith('#/t/')) { rerender(); toast(`'${task.name}'을 지웠어요.`); } else location.hash = '#/c/' + course.id;
   },
   addcrit() { const t = curTask(); t.criteria.push({ text: '', guide: '', points: 0 }); save(); rerender(); },
   delcrit(el) { const t = curTask(); t.criteria.splice(Number(el.dataset.i), 1); save(); rerender(); },
@@ -1751,6 +1800,7 @@ const ACT = {
   masks(el) { maskModal(el.dataset.id); },
   morefiles(el) { filePick(true, el.dataset.id); },
   relink(el) { filePick(false, el.dataset.id); },
+  renameclass(el) { const { cls } = findClass(el.dataset.id); const n = prompt('반 이름', cls.name); if (n && n.trim()) { cls.name = n.trim(); save(); rerender(); } },
   async delclass(el) {
     const { task, cls } = findClass(el.dataset.id);
     if (!confirm(`'${cls.name}' 반의 답안 그림과 채점 기록을 모두 지울까요?`)) return;
@@ -1867,14 +1917,26 @@ const ACT = {
   maskview() { G.showMask = !G.showMask; rerender(); },
   splittask(el) {
     const { course, task } = findTask(el.dataset.id);
-    splitAsk(course, [task], () => { location.hash = '#/c/' + course.id; rerender(); });
+    splitAsk(course, [task], () => { if (!el.dataset.stay) location.hash = '#/c/' + course.id; rerender(); });
   },
   splitask(el) { const c = findCourse(el.dataset.id); splitAsk(c, c.tasks.filter(t => partsOf(t) && !t.classes.length), () => rerender()); },
   copytask(el) {
     const { course, task } = findTask(el.dataset.id);
-    const c = copyTask(course, task); toast('복사본을 만들었어요. 이름과 채점 기준을 고쳐 쓰세요.', 3000);
+    const c = copyTask(course, task);
+    if (el.dataset.stay) { rerender(); toast(`'${c.name}'을 만들었어요. 카드 제목을 두 번 눌러 이름을 바꿀 수 있어요.`, 3500); return; }
+    toast('복사본을 만들었어요. 이름과 채점 기준을 고쳐 쓰세요.', 3000);
     location.hash = '#/t/' + c.id;
   },
+  tree(el) {
+    const o = treeOpen(); const ctx = curCtx(); const id = el.dataset.id;
+    const cur = (ctx.course && ctx.course.id === id) || (ctx.task && ctx.task.id === id);
+    const now = cur || o[id] === true;
+    if (cur && now) { toast('지금 보는 곳이라 펼쳐 둬요.', 1800); return; }
+    o[id] = !now; try { localStorage.setItem('aigrader-tree', JSON.stringify(o)); } catch (e) {}
+    renderSide();
+  },
+  renametask(el) { startRename(el.dataset.id); },
+  quotahelp(el) { quotaHelp(!!el.closest('#mbox')); },
   why() { G.why = !G.why; try { localStorage.setItem('aigrader-why', G.why ? '1' : '0'); } catch (e) {} rerender(); },
   whyreset(el) { const s = stu(gctx.cls, gctx.no); if (s.creason) delete s.creason[el.dataset.i]; save(); rerender(); },
   qopen(el) {
@@ -1984,6 +2046,18 @@ document.addEventListener('click', e => {
   }
   if (go && !e.target.closest('a,button,input,select,textarea')) location.hash = go.dataset.go;
 });
+function startRename(tid) {
+  const { task } = findTask(tid); if (!task) return;
+  const el = document.querySelector(`[data-ren="${tid}"]`);
+  if (!el) { const n = prompt('수행평가 이름', task.name); if (n && n.trim()) { task.name = n.trim(); save(); rerender(); } return; }
+  const inp = document.createElement('input'); inp.className = 'in tk-in'; inp.value = task.name;
+  el.replaceWith(inp); inp.focus(); inp.select();
+  let done = false;
+  const end = ok => { if (done) return; done = true; if (ok && inp.value.trim() && inp.value.trim() !== task.name) { task.name = inp.value.trim(); save(); toast('이름을 바꿨어요.'); } rerender(); };
+  inp.onkeydown = e => { if (e.key === 'Enter') end(true); else if (e.key === 'Escape') end(false); };
+  inp.onblur = () => end(true);
+}
+document.addEventListener('dblclick', e => { const t = e.target.closest('[data-ren]'); if (t) startRename(t.dataset.ren); });
 document.addEventListener('change', e => {
   const a = e.target.closest('[data-act-change]');
   if (a && ACT[a.dataset.actChange]) ACT[a.dataset.actChange](a, e);
