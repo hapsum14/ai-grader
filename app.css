@@ -502,3 +502,15 @@ details.aid[open]>summary{margin-bottom:10px}
 .pk small{font-size:10.5px}
 .pk.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .pk.on b{color:var(--accent-ink)}
+
+/* 정답표 · 애매 표시 · 읽은 답 고치기 */
+.mark.u{background:var(--ai-soft);color:var(--ai)}
+.ktb{display:flex;flex-direction:column;gap:5px;max-height:34vh;overflow-y:auto;overflow-x:hidden;padding-right:4px}
+.kr>*{min-width:0}
+.kr{display:grid;grid-template-columns:62px 1fr 30px;gap:6px;align-items:start}
+.kr .kno{padding:5px 8px;text-align:center}
+.kr .kans{min-height:36px;padding:6px 9px;font-size:13.5px}
+.mapright .maptb{max-height:26vh}
+.ansbox .ar{display:grid;grid-template-columns:44px 1fr;gap:8px;align-items:start;margin-bottom:6px}
+.ansbox .ar b{padding-top:7px;font-variant-numeric:tabular-nums}
+.ansbox textarea{min-height:44px;font-size:14px}

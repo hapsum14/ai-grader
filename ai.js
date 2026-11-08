@@ -318,10 +318,114 @@ const AI = (() => {
     return call({ system: GRADE_SYS + '\n- 충족을 가르는 선은 사용자가 준 "채점 엄격도"를 따른다.', parts, schema: GRADE_SCHEMA, temperature: 0.1, signal, think: 'think' in o ? o.think : 'low', _model: o.model });
   }
 
+  // ================= 정확도 위주 채점: 정답표(형별) → 읽기 → 판단(두 번) =================
+  // 채점 방식(설정): 정확하게 = 읽기·세특 Flash, 정답표·판단 Flash 깊게, 확인용 판단 Flash-Lite / 빠르게 = 고른 모델, 생각 낮게
+  const MODELS = { flash: 'gemini-flash-latest', lite: 'gemini-flash-lite-latest' };
+  function plan() {
+    const s = cfg();
+    if ((s.mode || 'accurate') !== 'fast') return {
+      key: { model: MODELS.flash, think: null }, read: { model: MODELS.flash, think: 'low' },
+      judge: { model: MODELS.flash, think: null }, judge2: { model: MODELS.lite, think: 'low' }, seteuk: { model: MODELS.flash, think: 'low' },
+    };
+    const m = s.model;
+    return { key: { model: m, think: 'low' }, read: { model: m, think: 'low' }, judge: { model: m, think: 'low' }, judge2: { model: m, think: 'low' }, seteuk: { model: m, think: 'low' } };
+  }
+
+  // 1) 정답표: 시험지(첫 답안지)를 읽고 형, 문항별 정답, 기준↔문항 대응, 판단 지침
+  const KEY_SCHEMA = O({
+    form: S('시험지 머리글에 적힌 형(예: A형, C형). 적혀 있지 않으면 빈칸'),
+    answers: A(O({
+      no: S('문항 번호(시험지 그대로, 예: 1, 2, 3-1, 3-2)'),
+      question: S('그 문항이 묻는 것 한 줄'),
+      answer: S('정답 또는 모범 답안 요지(정확한 과학 내용, 그래프·표를 근거로)'),
+    }), '시험지의 모든 문항(소문항 포함), 번호 순서대로'),
+    criteria: A(O({
+      index: I('채점 기준 번호(1부터)'),
+      questions: S('이 기준을 판단할 문항 번호(예: 3 또는 3-1, 3-2). 기준 번호와 문항 번호는 다를 수 있다'),
+      guide: S('판단 기준: 충족으로 볼 핵심 요소, 부분 인정 여부'),
+    })),
+  });
+  async function makeKey(task, images) {
+    if (isMock()) return {
+      form: 'C형',
+      answers: ['1', '2', '3-1', '3-2', '4-1', '4-2', '4-3', '5-1', '5-2', '5-3', '6'].map(no => ({ no, question: `(모의) ${no}번 문항`, answer: `(모의) ${no}번 정답` })),
+      criteria: task.criteria.map((c, i) => ({ index: i + 1, questions: ['3', '5', '1', '4', '6', '6'][i] || String(i + 1), guide: '(모의) 핵심 개념과 이유가 함께 있으면 충족' })),
+    };
+    const parts = [{ text: taskBrief(task, false) }];
+    if (task.question) parts.push({ text: '선생님이 적은 정답 메모(이것을 가장 먼저 따른다):\n' + task.question });
+    images.forEach((b64, i) => { parts.push({ text: `시험지(학생 답안지) ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
+    parts.push({ text: '이 시험지의 형과 모든 문항의 정답표를 만들고, 채점 기준마다 판단할 문항을 정해 주세요. 학생이 쓴 손글씨는 정답이 아닐 수 있으니 무시하고, 문항 글·그래프·표만 보고 정답을 직접 풀어 정하세요.' });
+    const P = plan().key;
+    return call({ system: `너는 고등학교 과학 수행평가의 정답표를 만드는 교사 조수다.
+- 문항을 직접 풀어 정답을 정한다. 그래프는 축과 곡선의 최댓값·교차점을 꼼꼼히 읽는다(예: 저해제가 있어도 최대 속도가 같으면 경쟁적 저해, 최대 속도가 낮아지면 비경쟁적 저해).
+- 표·그림 속 기호(A, B, (가) 등)는 이 시험지에 실제로 있는 것만 쓴다. 다른 시험지의 기호를 지어내지 않는다.
+- 채점 기준 번호와 문항 번호는 같지 않을 수 있다. 기준 문장의 내용과 문항이 묻는 것을 맞춰 대응을 정한다.`, parts, schema: KEY_SCHEMA, temperature: 0.1, think: P.think, _model: P.model });
+  }
+
+  // 2) 읽기: 학생 답을 문항별로 그대로 옮긴다(판단하지 않음)
+  const READ_SCHEMA = O({
+    answers: A(O({
+      no: S('문항 번호(시험지 그대로)'),
+      text: S('학생이 쓴 답을 그대로. 고쳐 쓰거나 요약하지 않는다. 지운 글자는 빼고, 읽을 수 없는 글자는 □, 답이 없으면 (답 없음)'),
+    })),
+    blank: B('답안 거의 전부가 비어 있으면 true'),
+    unreadable: B('글씨가 흐리거나 잘려 읽기 어려운 곳이 많으면 true'),
+  });
+  async function read(images, nos, signal) {
+    if (isMock()) { await sleep(300, signal); return { answers: (nos.length ? nos : ['1', '2', '3']).map(no => ({ no, text: `(모의) ${no}번 학생 답` })), blank: false, unreadable: false }; }
+    const parts = [];
+    images.forEach((b64, i) => { parts.push({ text: `학생 답안 ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
+    parts.push({ text: (nos.length ? `시험지 문항 번호: ${nos.join(', ')}\n` : '') + '문항마다 학생이 쓴 답을 그대로 옮겨 적어 주세요. 채점하지 마세요. 인쇄된 문제 글은 옮기지 않습니다.' });
+    const P = plan().read;
+    return call({ system: '너는 손글씨 답안을 정확히 옮겨 적는 조수다. 검은 상자로 가린 곳은 개인정보이니 읽지 않는다. 학생이 지우고 다시 쓴 곳은 최종 답만 쓴다. 애매한 글자는 추측하지 말고 □ 로 둔다.', parts, schema: READ_SCHEMA, temperature: 0, signal, think: P.think, _model: P.model });
+  }
+
+  // 3) 판단: 글만 보고 기준마다(대응 문항의 학생 답 + 정답)
+  const JUDGE_SCHEMA = O({
+    criteria: A(O({
+      index: I('채점 기준 번호(1부터)'),
+      met: B('충족 여부'),
+      points: N('points 방식일 때 준 점수, count 방식이면 0'),
+      evidence: S('판단 근거가 된 학생 답 구절을 그대로 인용(30자 이내, 답이 없으면 빈칸)'),
+      reason: S('맨 앞에 본 문항을 [3번]처럼 쓰고, 충족/미충족 이유 한 문장(50자 이내)'),
+    })),
+    feedback: S('학생에게 돌려줄 피드백 2문장(잘한 점 1 + 보완할 점 1, 존댓말)'),
+    observation: S('세특 작성을 위한 관찰 요약: 학생 답에 실제로 있는 내용과 특징 2문장'),
+  });
+  const pick = (answers, q) => {
+    const want = String(q || '').split(/[,\s]+/).map(x => x.replace(/번/g, '').trim()).filter(Boolean);
+    if (!want.length) return answers;
+    return answers.filter(a => want.some(w => a.no === w || a.no.startsWith(w + '-') || a.no.startsWith(w + '(') || a.no.startsWith(w + '.')));
+  };
+  async function judge(task, key, answers, signal, o = {}) {
+    const lv = STRICT[task.strict] ? task.strict : '보통';
+    if (isMock()) { await sleep(300, signal); const g = mockGrade(task, lv); return { criteria: g.criteria, feedback: g.feedback, observation: g.observation }; }
+    const keyAns = (key && key.answers) || [];
+    const blocks = task.criteria.map((c, i) => {
+      const k = (key && key.crit && key.crit[i]) || {};
+      const qs = k.qnos || '';
+      const st = pick(answers, qs), ka = pick(keyAns, qs);
+      return `[기준 ${i + 1}] ${c.text}${task.mode === 'points' ? ` (${c.points}점)` : ''}
+- 판단할 문항: ${qs || '(정해지지 않음: 기준 내용과 맞는 문항을 학생 답 전체에서 찾을 것)'}
+- 그 문항의 정답: ${ka.map(a => `${a.no}. ${a.answer}`).join(' / ') || '(정답표 없음)'}
+- 학생 답: ${st.map(a => `${a.no}. ${a.text}`).join(' / ') || '(답 없음)'}${k.guide ? `\n- 판단 지침: ${k.guide}` : ''}`;
+    }).join('\n\n');
+    const parts = [{ text: taskBrief(task, false) }];
+    if (task.question) parts.push({ text: '선생님 정답 메모(가장 먼저 따른다):\n' + task.question });
+    parts.push({ text: '채점 기준별 자료:\n\n' + blocks });
+    parts.push({ text: '학생 답 전체(참고):\n' + answers.map(a => `${a.no}. ${a.text}`).join('\n') });
+    parts.push({ text: STRICT[lv] + `\n\n기준 ${task.criteria.length}개를 위 엄격도로 판단해 주세요. 기준마다 붙은 '학생 답'과 '정답'을 비교해 판단하고, 다른 문항의 답으로 판단하지 않습니다. evidence 는 학생 답에서 그대로 인용합니다.` });
+    return call({ system: `너는 한국 고등학교 수행평가 채점을 돕는 조수다. 최종 점수는 교사가 정한다.
+- 정답표의 정답을 기준으로 판단한다. 학생 답에 없는 내용을 지어내거나, 맞게 쓴 답을 틀렸다고 하지 않는다.
+- 표현이 서툴러도 핵심이 정답과 같으면 맞음으로 본다. 판단이 애매하면 reason 에 '애매함'이라고 밝힌다.
+- 충족을 가르는 선은 사용자가 준 채점 엄격도를 따른다.`, parts, schema: JUDGE_SCHEMA, temperature: 0.1, signal, think: o.think === undefined ? 'low' : o.think, _model: o.model });
+  }
+
   // ---------- 4. 세특(수행평가 한 개 몫) ----------
   const SETEUK_SCHEMA = O({
     text: S('생기부 세특 문구(교사 관찰 시점, ~함/~임/~보임 으로 끝나는 1~3문장)'),
     level: S('쓴 서술어 수준(기억/이해/적용/분석/평가/창조 중)'),
+    quotes: A(S('세특 문장마다 근거가 된 학생 답 구절(학생 답안에서 그대로 옮김)'), '세특의 문장 순서대로, 문장마다 하나'),
   });
   const SETEUK_SYS = `너는 한국 고등학교 교사가 학교생활기록부 '교과 세부능력 및 특기사항(세특)'을 쓰도록 돕는 조수다. 활동 한 개에 대한 문구를 쓴다. 이 문구는 과목 전체 세특의 가운데(활동 부분)에 들어간다.
 근거: 교사용 '생기부 작성 머신 v9.29' 규칙과 2026 학교생활기록부 기재요령.
@@ -360,7 +464,10 @@ const AI = (() => {
     parts.push({ text: '이 학생의 자료:\n' + info });
     parts.push({ text: `분량: ${range[0]}~${range[1]}바이트(한글 약 ${Math.round(range[0] / 3)}~${Math.round(range[1] / 3)}자).${range[2] ? ' 성취 수준 하: 자료에 있는 만큼만, 짧아도 됨.' : ''}` });
     if (prev) parts.push({ text: `직전 초안은 ${prev.bytes}바이트라서 범위를 벗어났습니다. ${prev.bytes > range[1] ? '내용을 압축해' : '그 학생 답의 구체적 내용을 더해'} ${range[0]}~${range[1]}바이트로 다시 써 주세요.\n직전 초안: ${prev.text}` });
-    return call({ system: SETEUK_SYS, parts, schema: SETEUK_SCHEMA, temperature: 0.6, signal, think: 'think' in o ? o.think : 'low', _model: o.model });
+    if (o.unsupported && o.unsupported.length) parts.push({ text: '직전 초안의 다음 내용은 학생 답안에서 근거를 찾을 수 없습니다. 이 내용을 빼거나 답안에 있는 내용으로 바꿔 다시 써 주세요:\n' + o.unsupported.join('\n') });
+    parts.push({ text: 'quotes 에는 문장마다 그 근거가 된 학생 답 구절을 학생 답안에서 그대로 옮겨 적는다. 근거 구절을 댈 수 없는 내용은 쓰지 않는다. 근거 없는 꾸밈말(논리적으로, 체계적으로, 과학적 메커니즘과 연계하여 등)도 쓰지 않는다.' });
+    const P = plan().seteuk;
+    return call({ system: SETEUK_SYS, parts, schema: SETEUK_SCHEMA, temperature: 0.4, signal, think: 'think' in o ? o.think : P.think, _model: o.model || P.model });
   }
 
   function taskBrief(task, withGuide) {
@@ -400,8 +507,8 @@ const AI = (() => {
   function mockSeteuk(task, info, range) {
     let t = `${task.name.replace(/(실험|탐구)/g, ' $1 ').replace(/\s+/g, ' ').trim()} 활동에서는 펩신과 트립신의 최적 pH 차이를 근거로 소장에서 펩신이 작용하는 조건을 설명하고, 온도와 pH를 변인으로 효소 활성 실험을 설계함.`;
     while (App.bytes(t) < range[0]) t += ' 결과를 기질 특이성과 연결해 분석함.';
-    return { text: t, level: '분석' };
+    return { text: t, level: '분석', quotes: ['(모의) 1번 학생 답'] };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS };
 })();
