@@ -615,3 +615,11 @@ details.aid[open]>summary{margin-bottom:10px}
 /* 선생님 최종 판단 · 옛 판단 세특 */
 .mark.t{background:var(--accent);color:var(--accent-ink)}
 .note.stale{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0}
+
+/* 문항 유형 */
+.kr .ktype{grid-column:2/4;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:-2px}
+.kr .kty{width:auto;padding:3px 6px;font-size:12.5px}
+.kr .kty.on{border-color:var(--ai);color:var(--ai);background:var(--ai-soft)}
+.kr .krule{flex:1;min-width:180px;padding:4px 8px;font-size:12.5px}
+.kr .kwhy{flex-basis:100%}
+.qflag{border-left:3px solid var(--ai)}

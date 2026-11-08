@@ -414,6 +414,27 @@ const AI = (() => {
 - 채점 기준 번호와 문항 번호는 같지 않을 수 있다. 기준 문장의 내용과 문항이 묻는 것을 맞춰 대응을 정한다.`, parts, schema: KEY_SCHEMA, temperature: 0.1, think: P.think, _model: P.model });
   }
 
+  // 1-2) 문항 유형: 표본 학생 여럿의 답을 비교해 정답이 모두 같은 문항인지, 학생 조건·자료에 따라 다른지, 열린 답인지
+  const CLASSIFY_SCHEMA = O({
+    questions: A(O({
+      no: S('정답표의 문항 번호 그대로'),
+      type: S('fixed(누구나 정답이 같음) / student(학생마다 받은 조건·시료·측정값·관찰 결과에 따라 정답이 달라짐) / open(의견·설계·논술처럼 정답이 여럿) 중 하나'),
+      rule: S('student 면 판단 규칙(학생이 적은 조건·자료에서 결론을 어떻게 끌어내면 맞는지), open 이면 꼭 들어가야 할 요소. fixed 면 빈칸'),
+      why: S('그렇게 본 까닭 한 문장(표본 학생 답이 어떻게 달랐는지 등)'),
+    })),
+  });
+  async function classify(task, key, samples, signal) {
+    if (isMock()) { await sleep(200, signal); return { questions: (key.answers || []).map(a => ({ no: a.no, type: 'fixed', rule: '', why: '(모의)' })) }; }
+    const parts = [{ text: taskBrief(task, false) }];
+    parts.push({ text: '정답표(학생 한 명의 시험지로 만든 것):\n' + (key.answers || []).map(a => `${a.no}. [문제] ${a.q || ''} [정답] ${a.answer}`).join('\n') });
+    samples.forEach((sm, i) => parts.push({ text: `표본 학생 ${i + 1}의 답:\n` + sm.map(a => `${a.no}. ${a.text}`).join('\n') }));
+    parts.push({ text: `문항마다 유형을 정해 주세요.
+- 표본 학생들의 답이 서로 다른데, 각자 받은 조건(시료·시약 번호, 모둠 재료, 자기 측정값·관찰 결과)이 달라서 그런 것이면 student 입니다. 이때 정답표의 정답은 한 학생 것일 뿐이니 rule 에 '학생이 적은 조건·관찰에서 결론을 올바르게 끌어냈는지'를 이 문항에 맞게 구체적으로 적습니다.
+- 학생 답이 달라도 그냥 틀린 답이 섞인 것이면 fixed 입니다.
+- 의견·설계·논술처럼 여러 답이 맞을 수 있으면 open 이고, rule 에 꼭 들어가야 할 요소를 적습니다.` });
+    return call({ system: '너는 수행평가 문항을 분석하는 교사 조수다. 학생 답의 옳고 그름이 아니라 문항의 정답 구조를 판단한다.', parts, schema: CLASSIFY_SCHEMA, temperature: 0, signal, think: 'low', _model: MODELS.flash });
+  }
+
   // 0) 쪽 방향: 작게 줄인 그림(이름은 읽히지 않는 크기)으로 글자가 바로 서려면 몇 도 돌려야 하는지
   const ORIENT_SCHEMA = O({ rotate: I('글자가 똑바로 읽히려면 그림을 시계 방향으로 돌려야 하는 각도: 0, 90, 180, 270 중 하나') });
   async function orient(b64, signal) {
@@ -447,7 +468,7 @@ const AI = (() => {
     images.forEach((b64, i) => { parts.push({ text: `학생 답안 ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
     parts.push({ text: (nos.length ? `참고 — 같은 반 정답표의 문항 번호: ${nos.join(', ')} (이 시험지의 번호가 다르면 이 시험지 번호를 따른다)\n` : '') + '문항마다 학생이 쓴 답을 그대로 옮겨 적어 주세요. 채점하지 마세요. 인쇄된 문제 글은 옮기지 않습니다. 시험지에 인쇄된 형 표시(A형 등)가 있으면 form 에 적어 주세요.' });
     const P = plan().read;
-    return call({ system: '너는 손글씨 답안을 정확히 옮겨 적는 조수다. 검은 상자로 가린 곳은 개인정보이니 읽지 않는다. 학생이 지우고 다시 쓴 곳은 최종 답만 쓴다. 애매한 글자는 추측하지 말고 □ 로 둔다. 그림·모형·그래프 답은 "(그림 생략)"으로 넘기지 말고, 무엇을 몇 개, 어떻게 그렸는지 말로 적는다.', parts, schema: READ_SCHEMA, temperature: 0, signal, think: P.think, _model: P.model });
+    return call({ system: '너는 손글씨 답안을 정확히 옮겨 적는 조수다. 검은 상자로 가린 곳은 개인정보이니 읽지 않는다. 학생이 지우고 다시 쓴 곳은 최종 답만 쓴다. 애매한 글자는 추측하지 말고 □ 로 둔다. 그림·모형·그래프 답은 "(그림 생략)"으로 넘기지 말고, 무엇을 몇 개, 어떻게 그렸는지 말로 적는다. 학생이 표 옆이나 빈칸에 적은 조건(시료·시약 번호, 모둠, 측정값 등)도 그 문항 답 앞에 [조건: …]으로 함께 적는다.', parts, schema: READ_SCHEMA, temperature: 0, signal, think: P.think, _model: P.model });
   }
 
   // 3) 판단: 글만 보고 기준마다(대응 문항의 학생 답 + 정답)
@@ -472,6 +493,9 @@ const AI = (() => {
     if (isMock()) { await sleep(300, signal); const g = mockGrade(task, lv); return { criteria: g.criteria, feedback: g.feedback, observation: g.observation }; }
     const keyAns = (key && key.answers) || [];
     const byQ = key && key.map === 'order';
+    // 문항 유형: student = 학생 조건에 따라 정답이 다름, open = 열린 답
+    const typeNote = ka => ka.map(a => a.type === 'student' ? `\n- ⚠ ${a.no}번은 학생마다 조건이 달라 정답이 다른 문항입니다. 위 정답은 한 학생의 예시일 뿐이니 그대로 비교하지 말고, 이 규칙으로 판단: ${a.rule || '학생이 적은 조건·관찰 결과에서 결론을 올바르게 끌어냈는지(자기 자료와 결론이 서로 맞는지)'}`
+      : a.type === 'open' ? `\n- ${a.no}번은 정답이 여럿인 열린 문항입니다. 위 답은 예시이고, 꼭 들어갈 요소: ${a.rule || '문항이 요구한 요소'}` : '').join('');
     const blocks = task.criteria.map((c, i) => {
       const k = (key && key.crit && key.crit[i]) || {};
       const qs = k.qnos || '';
@@ -481,12 +505,12 @@ const AI = (() => {
         return `[기준 ${i + 1} = 문항 ${qs}]${task.mode === 'points' ? ` (${c.points}점)` : ''}
 - 문제: ${ka.map(a => `${a.no}. ${a.q || ''}`).join(' / ') || '(정답표에 없음)'}
 - 정답: ${ka.map(a => `${a.no}. ${a.answer}`).join(' / ') || '(정답표 없음)'}${gd ? `\n- 판단 지침: ${gd}` : ''}
-- 학생 답: ${st.map(a => `${a.no}. ${a.text}`).join(' / ') || '(답 없음)'}
+- 학생 답: ${st.map(a => `${a.no}. ${a.text}`).join(' / ') || '(답 없음)'}${typeNote(ka)}
 - 참고(채점 기준표 ${i + 1}번 문장 — 문항 내용과 다르면 무시): ${c.text}`;
       }
       return `[기준 ${i + 1}] ${c.text}${task.mode === 'points' ? ` (${c.points}점)` : ''}
 - 판단할 문항: ${qs || '(정해지지 않음: 기준 내용과 맞는 문항을 학생 답 전체에서 찾을 것)'}
-- 그 문항의 정답: ${ka.map(a => `${a.no}. ${a.answer}`).join(' / ') || '(정답표 없음)'}
+- 그 문항의 정답: ${ka.map(a => `${a.no}. ${a.answer}`).join(' / ') || '(정답표 없음)'}${typeNote(ka)}
 - 학생 답: ${st.map(a => `${a.no}. ${a.text}`).join(' / ') || '(답 없음)'}${k.guide ? `\n- 판단 지침: ${k.guide}` : ''}`;
     }).join('\n\n');
     const parts = [{ text: taskBrief(task, false) }];
@@ -595,5 +619,5 @@ const AI = (() => {
     return { text: t, level: '분석', quotes: ['(모의) 1번 학생 답'] };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, detectForm, onUsage: f => useL.push(f) };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, detectForm, classify, onUsage: f => useL.push(f) };
 })();

@@ -1191,6 +1191,9 @@ function vClass(kid) {
     ${nextTodo ? `<a class="btn primary lg" href="#/g/${cls.id}/${nextTodo}">${ic('play')}${statusOf(cls, nextTodo) === 'AI 채점' ? '확인' : '채점'} 이어 하기 · ${nextTodo}번</a>`
       : `<a class="btn lg" href="#/g/${cls.id}/1">${ic('check')}채점 끝 · 다시 보기</a>`}
   </div>
+  ${Object.keys(cls.qflags || {}).length ? `<div class="card note qflag"><b>정답이 학생마다 다를 수 있는 문항</b> — ${Object.entries(cls.qflags).map(([q, m]) => `${esc(q)}번: ${esc(m)}`).join(' · ')}
+    <div class="row" style="gap:6px;margin-top:8px">${Object.keys(cls.qflags).map(q => `<button class="btn sm primary" data-act="qtostudent" data-id="${cls.id}" data-q="${esc(q)}">${esc(q)}번을 '학생 조건에 따라'로 바꾸고 다시 판단</button>`).join('')}
+      <button class="btn sm" data-act="keyview" data-id="${cls.id}">정답표 보기</button><button class="btn sm ghost" data-act="qflagoff" data-id="${cls.id}">괜찮아요</button></div></div>` : ''}
   <div class="kswitch">${task.classes.map(k => `<a class="kchip ${k === cls ? 'on' : ''}" href="#/k/${k.id}">${esc(k.name)}<small>${doneCount(k)}/${k.size}</small></a>`).join('')}
     <button class="kchip add" data-act="addclass" data-id="${task.id}">${ic('plus')}반 추가</button></div>
   <div class="prog3"><div class="bar3"><i class="ok" style="width:${pct(done)}"></i><i class="ai" style="width:${pct(n['AI 채점'])}"></i></div>
@@ -1574,8 +1577,52 @@ async function makeKeyFor(task, cls, onPhase) {
   cls.formChecked = true;
   const f = formOf(cls);
   task.keys = task.keys || {};
-  if (!task.keys[f]) task.keys[f] = keyFromAI(task, r, cls.name, sm ? { k: sm.k.id, no: sm.sub.no } : null);
+  if (!task.keys[f]) {
+    task.keys[f] = keyFromAI(task, r, cls.name, sm ? { k: sm.k.id, no: sm.sub.no } : null);
+    onPhase && onPhase('학생 몇 명의 답을 비교해 문항 유형을 확인 중… (10초 안팎)');
+    await classifyKey(task, task.keys[f], sm ? sm.k : cls).catch(e => { task.keys[f].typeErr = e.message; });
+  }
   save(); return task.keys[f];
+}
+// 반에서 골고루 학생 4명(처음·1/3·2/3·끝)을 읽어 문항마다 정답 구조(고정/학생 조건에 따라/열린 답)를 정한다
+// 정답이 하나인 문항인데 반 학생 여럿(3명 이상, 틀린 학생의 40% 이상)이 같은 '오답'을 쓰면 정답이 학생마다 다를 수 있다
+function qSuspect(task, cls) {
+  const flags = {}; let n = 0;
+  const norm = t => String(t || '').replace(/\[조건:[^\]]*\]/g, '').normalize('NFKC').replace(/[\s.,·:;()]/g, '').toLowerCase();
+  task.criteria.forEach((c, i) => {
+    const wrong = {}; let w = 0, key = null;
+    for (const [no, s] of Object.entries(cls.students)) {
+      if (!s.ai || !s.ai.answers) continue;
+      key = keyFor(task, cls, Number(no)); if (!key || key.map !== 'order') continue;
+      const q = (key.crit[i] || {}).qnos; const ka = (key.answers || []).filter(a => String(a.no).split(/[-(.\s]/)[0] === q);
+      if (!ka.length || ka.some(a => a.type && a.type !== 'fixed')) continue;
+      if (finalMet(task, s, i)) continue;
+      const t = s.ai.answers.filter(a => String(a.no).split(/[-(.\s]/)[0] === q).map(a => norm(a.text)).join('|');
+      if (!t || /답없음/.test(t)) continue;
+      w++; wrong[t] = (wrong[t] || 0) + 1;
+    }
+    const top = Math.max(0, ...Object.values(wrong));
+    if (top >= 3 && top >= w * 0.4) { flags[(key && key.crit[i] || {}).qnos] = `${top}명이 같은 답을 썼는데 모두 틀림으로 판단됐어요`; n++; }
+  });
+  cls.qflags = flags; return n;
+}
+async function classifyKey(task, key, cls) {
+  const subs = cls.subs.filter(x => !(cls.students[x.no] || {}).status);
+  if (subs.length < 2) return;
+  const idx = [...new Set([0, Math.floor(subs.length / 3), Math.floor(subs.length * 2 / 3), subs.length - 1])];
+  const nos = (key.answers || []).map(a => a.no);
+  const samples = (await Promise.all(idx.map(async i => {
+    const x = subs[i], s = cls.students[x.no];
+    if (s && s.ai && s.ai.answers && s.ai.answers.length) return s.ai.answers; // 이미 읽은 학생은 다시 읽지 않음
+    try { return ((await AI.read(await aiImages(cls, x), nos)).answers || []).map(a => ({ no: String(a.no || '').replace(/번/g, '').trim(), text: String(a.text || '') })); } catch (e) { return null; }
+  }))).filter(Boolean);
+  if (samples.length < 2) return;
+  const r = await AI.classify(task, key, samples);
+  (r.questions || []).forEach(q => {
+    const a = (key.answers || []).find(x => x.no === String(q.no || '').replace(/번/g, '').trim()); if (!a) return;
+    a.type = ['student', 'open'].includes(q.type) ? q.type : 'fixed'; a.rule = a.type === 'fixed' ? '' : (q.rule || ''); a.why = q.why || '';
+  });
+  key.typed = samples.length;
 }
 function needPrep(task, cls) { return !!task.criteria.length && !keyOf(task, cls); }
 // AI 채점 전: 이 반의 시험지 형과 정답표가 없으면 만들고, 선생님이 아직 확인하지 않았으면 확인 창
@@ -1603,7 +1650,11 @@ function keyModal(task, cls, then, form) {
   const smk = key.sample && findClass(key.sample.k).cls;
   const sm = smk && subOf(smk, key.sample.no) ? { k: smk, sub: subOf(smk, key.sample.no) } : sampleSub(task, cls);
   const pages = sm ? sm.sub.pages.map(pi => sm.k.pages[pi]) : [];
-  const ansRow = (a, i) => `<div class="kr"><input class="in kno" data-kno="${i}" value="${esc(a.no)}" title="문항"><textarea class="in kans" rows="1" data-kans="${i}" placeholder="정답">${esc(a.answer)}</textarea><button class="ibtn" data-kdel="${i}" title="이 문항 지우기">${ic('trash')}</button></div>`;
+  const TY = { fixed: '정답 하나', student: '학생 조건에 따라', open: '열린 답' };
+  const ansRow = (a, i) => `<div class="kr"><input class="in kno" data-kno="${i}" value="${esc(a.no)}" title="문항"><textarea class="in kans" rows="1" data-kans="${i}" placeholder="${a.type && a.type !== 'fixed' ? '예시 답(한 학생 것)' : '정답'}">${esc(a.answer)}</textarea><button class="ibtn" data-kdel="${i}" title="이 문항 지우기">${ic('trash')}</button>
+    <div class="ktype"><select class="in sm kty ${a.type && a.type !== 'fixed' ? 'on' : ''}" title="이 문항의 정답 구조">${Object.entries(TY).map(([v, l]) => `<option value="${v}" ${(a.type || 'fixed') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <input class="in krule ${a.type && a.type !== 'fixed' ? '' : 'hide'}" value="${esc(a.rule || '')}" placeholder="${a.type === 'open' ? '꼭 들어갈 요소' : '판단 규칙: 학생이 적은 조건·관찰에서 결론을 어떻게 끌어내면 맞는지'}">
+      ${a.why ? `<small class="faint kwhy">${esc(a.why)}</small>` : ''}</div></div>`;
   const others = task.classes.filter(k => k !== cls && k.formChecked && formOf(k) === formOf(cls)).map(k => k.name);
   const kf = byForm ? form : formOf(cls);
   modal(`<h2>정답표 확인 <span class="pill">${kf ? esc(kf) + '형' : '형 표시 없음'}</span></h2>
@@ -1613,6 +1664,7 @@ function keyModal(task, cls, then, form) {
       <div class="mapright">
         <div class="row ${byForm ? 'hide' : ''}" style="gap:6px"><span class="small muted">시험지 형</span><input class="in" id="kform" value="${esc(formOf(cls))}" style="width:64px" placeholder="예: C"><span class="small faint">${others.length ? `같은 형: ${esc(others.join(', '))}` : '형이 같은 반은 이 정답표를 함께 써요'}</span></div>
         <div class="sec-h" style="margin:12px 0 6px">문항별 정답 <span class="faint small" style="font-weight:400">AI 가 시험지를 풀어 만든 것 — 틀린 곳을 고쳐 주세요</span></div>
+        <p class="small ${key.answers.some(a => a.type && a.type !== 'fixed') ? 'muted' : 'faint'}" style="margin:0 0 6px">${key.typed ? `학생 ${key.typed}명의 답을 비교해 문항 유형을 정했어요${key.answers.some(a => a.type && a.type !== 'fixed') ? ' — <b>학생 조건에 따라·열린 답</b> 문항은 정답 대신 규칙으로 판단해요. 맞는지 확인해 주세요.' : '. 모두 정답이 하나인 문항이에요.'}` : '문항마다 정답 구조를 고를 수 있어요(학생마다 조건이 달라 정답이 다르면 \'학생 조건에 따라\').'}</p>
         <div class="ktb" id="ktb">${key.answers.map(ansRow).join('')}</div><button class="btn sm ghost" id="kadd">+ 문항</button>
         <div class="sec-h" style="margin:14px 0 6px">채점 기준 ↔ 문항 <span class="sp"></span><button class="lnk" id="kord" type="button">문항 순서대로 1:1</button></div>
         <p class="small ${key.map === 'order' ? 'faint' : 'muted'}" style="margin:0 0 6px">${key.map === 'order' ? `기준 ${task.criteria.length}개 = 문항 ${topNos(key).length}개라 순서대로 맞췄어요. 판단은 각 문항의 정답으로 하고, 기준 문장은 참고예요.` : key.map === 'teacher' ? '선생님이 정한 대응이에요.' : `기준 ${task.criteria.length}개, 문항 ${topNos(key).length}개라 AI 가 내용으로 짐작했어요. 맞는지 확인해 주세요.`}</p>
@@ -1624,7 +1676,7 @@ function keyModal(task, cls, then, form) {
   const show = async j => { $$('#mbox [data-pg]').forEach(b => b.classList.toggle('on', Number(b.dataset.pg) === j)); const im = $('#mapimg'); if (im) im.src = await imgURL(pages[j].id); };
   if (pages.length) { $$('#mbox [data-pg]').forEach(b => b.onclick = () => show(Number(b.dataset.pg))); show(0); }
   const collect = () => {
-    const rows = $$('#ktb .kr').map(r => ({ no: $('.kno', r).value.replace(/번/g, '').trim(), answer: $('.kans', r).value.trim() })).filter(a => a.no || a.answer);
+    const rows = $$('#ktb .kr').map(r => ({ no: $('.kno', r).value.replace(/번/g, '').trim(), answer: $('.kans', r).value.trim(), type: $('.kty', r) ? $('.kty', r).value : 'fixed', rule: $('.krule', r) ? $('.krule', r).value.trim() : '' })).filter(a => a.no || a.answer);
     key.answers = rows.map(a => Object.assign({ q: '' }, (key.answers.find(x => x.no === a.no) || {}), a));
     $$('#mbox [data-mi]').forEach(inp => { const i = Number(inp.dataset.mi); key.crit[i] = key.crit[i] || { qnos: '', guide: '' }; const v = inp.value.replace(/번/g, '').trim(); if (v !== key.crit[i].qnos) key.map = 'teacher'; key.crit[i].qnos = v; });
     const nf = normForm($('#kform').value);
@@ -1642,6 +1694,7 @@ function keyModal(task, cls, then, form) {
     $$('#mbox [data-mi]').forEach(inp => { inp.value = tops[Number(inp.dataset.mi)]; }); collect(); key.map = 'order'; save(); toast('순서대로 맞췄어요.');
   };
   $('#kadd').onclick = () => { $('#ktb').insertAdjacentHTML('beforeend', ansRow({ no: '', answer: '' }, $$('#ktb .kr').length)); };
+  $('#ktb').onchange = e => { const t = e.target.closest('.kty'); if (!t) return; const r = t.closest('.kr'); const ru = $('.krule', r); ru.classList.toggle('hide', t.value === 'fixed'); t.classList.toggle('on', t.value !== 'fixed'); ru.placeholder = t.value === 'open' ? '꼭 들어갈 요소' : '판단 규칙: 학생이 적은 조건·관찰에서 결론을 어떻게 끌어내면 맞는지'; if (t.value !== 'fixed') ru.focus(); };
   $('#ktb').onclick = e => { const d = e.target.closest('[data-kdel]'); if (d) d.closest('.kr').remove(); };
   $('#kok').onclick = () => { collect(); (byForm ? key : (keyOf(task, cls) || key)).checked = true; save(); closeModal(true); if (then) then(); else { rerender(); toast('정답표를 확인했어요. 다음 AI 채점부터 적용돼요.'); } };
   if (then) $('#kskip').onclick = () => { collect(); closeModal(true); then(); };
@@ -2257,10 +2310,11 @@ const ACT = {
     if (jobFor('grade:' + cls.id)) { toast('이 반은 이미 AI 채점 중입니다.'); return; }
     if (needPrep(task, cls) || (keyOf(task, cls) && !keyOf(task, cls).checked && e !== 'again')) { prepGrade(task, cls, () => ACT.batchgrade(el, 'again', items)); return; }
     const lv = task.strict || '보통';
-    runBatch(`${cls.name} AI 채점(${lv}) — ${items.length}명`, items,
+    const done = runBatch(`${cls.name} AI 채점(${lv}) — ${items.length}명`, items,
       async (no, sig) => { await runAIGrade(task, cls, no, sig); return 'AI ' + aiScoreOf(task, cls.students[no]) + '점'; },
       { key: 'grade:' + cls.id, kind: 'grade', clsId: cls.id, where: '#/k/' + cls.id,
  });
+    Promise.resolve(done).then(() => { const n = qSuspect(task, cls); if (n) { save(); softRefresh(cls.id); toast(`${n}개 문항은 학생마다 정답이 다를 수 있어요. 반 화면에서 확인해 주세요.`, 6000); } });
   },
   batchseteuk(el, e, only) {
     const { course, task, cls } = findClass(el.dataset.id); task._subject = course.name;
@@ -2345,6 +2399,20 @@ const ACT = {
     const p = JOBS[k].resume; JOBS.splice(k, 1); pendDel(p.key); renderJobs();
     ACT[p.kind === 'grade' ? 'batchgrade' : 'batchseteuk']({ dataset: { id: p.clsId } });
   },
+  qtostudent(el) {
+    const { course, task, cls } = findClass(el.dataset.id); task._subject = course.name; const q = el.dataset.q;
+    const key = keyOf(task, cls); if (!key) return;
+    (key.answers || []).filter(a => String(a.no).split(/[-(.\s]/)[0] === q).forEach(a => { a.type = 'student'; a.rule = a.rule || '학생이 적은 조건·관찰 결과에서 결론을 올바르게 끌어냈는지(자기 자료와 결론이 서로 맞으면 맞음)'; });
+    delete cls.qflags[q]; save();
+    const i = key.crit.findIndex(c => c.qnos === q);
+    const items = Object.keys(cls.students).map(Number).filter(no => { const s = cls.students[no]; return s.ai && s.ai.answers && !s.done && i >= 0 && !finalMet(task, s, i); });
+    if (!items.length) { rerender(); toast('다시 판단할 학생이 없어요.'); return; }
+    cls._reuse = new Set(items);
+    items.forEach(no => Object.assign(stu(cls, no), { touched: false, override: null, special: null, checks: [], pts: [], creason: null }));
+    toast(`${q}번을 학생 조건에 따라 판단하도록 바꿨어요. 틀림이었던 ${items.length}명을 다시 판단해요(이미 읽은 답 사용).`, 4000);
+    ACT.batchgrade({ dataset: { id: cls.id } }, 'again', items);
+  },
+  qflagoff(el) { const { cls } = findClass(el.dataset.id); cls.qflags = {}; save(); rerender(); },
   jobbtn(el) { const j = JOBS.find(x => x.id === el.dataset.j); if (j && j.onBtn) j.onBtn(); },
   jobtoggle(el) { const j = JOBS.find(x => x.id === el.dataset.j); if (j) { j.open = !j.open; renderJobs(); } },
   strict(el) {
