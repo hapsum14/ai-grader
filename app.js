@@ -870,9 +870,9 @@ function vTask(tid) {
     <label class="f" style="margin-top:14px">특수 상황 점수(백지·미참여·결석 등)</label><div class="scale">${specials}<button class="btn sm" data-act="addspec">+</button></div>
   </div>
   <div class="card">
-    <div class="sec-h">${ICON.pen}정답 메모 <span class="faint small">(선택)</span></div>
-    <div class="sub">정답 요지를 적어 두면 AI 채점이 더 정확해져요.</div>
-    <label class="f">선생님 메모</label><textarea class="in" rows="3" data-f="question" placeholder="예) 1번 정답: 펩신의 최적 pH 는 2, 소장은 약 8이라 활성을 잃는다.">${esc(t.question || '')}</textarea>
+    <div class="sec-h">${ICON.pen}채점 방향·정답 메모 <span class="faint small">(선택)</span></div>
+    <div class="sub">AI 는 이 메모를 가장 먼저 따라요. 선생님이 무엇을 보고 점수를 주는지 적어 두면 AI 판단이 선생님과 가까워져요.</div>
+    <label class="f">선생님 메모</label><textarea class="in" rows="3" data-f="question" placeholder="예) 물어본 것에 성실히 답하고 칸을 채웠으면 충족(내용의 깊이는 보지 않음). / 1번 정답: 펩신의 최적 pH 는 2.">${esc(t.question || '')}</textarea>
 
   </div>`;
 }
@@ -2361,6 +2361,8 @@ const ACT = {
       title: 'AI 채점 다시', note: "고른 학생만 다시 채점해요. '채점 완료'한 학생은 점수 그대로, AI 판단만 새로.",
       nos, sel, tag, quick: [['확인 필요', no => statusOf(cls, no) !== '채점 완료'], ['채점 완료', no => statusOf(cls, no) === '채점 완료']],
       extra: `<div class="row" style="margin-top:12px"><span class="small muted">채점 기준</span>${strictSeg(task)}<span class="sp"></span><button class="lnk" data-act="keyview" data-id="${cls.id}">정답표 보기</button></div>
+        <label class="f" style="margin-top:12px">채점 방향 메모 <span class="faint small">— AI 가 가장 먼저 따라요</span></label>
+        <textarea class="in" id="rgdir" rows="2" placeholder="예) 물어본 것에 성실히 답하고 칸을 채웠으면 충족(내용의 깊이는 보지 않음)">${esc(task.question || '')}</textarea>
         <label class="opt" style="margin-top:10px"><input type="checkbox" id="rgread"><span>답안도 다시 읽기 <small class="faint">— 끄면 이미 읽은 답으로 판단만 다시 해요(빠르고 한도 절반). 쪽을 돌렸거나 잘못 읽었을 때 켜세요.</small></span></label>`,
       go: `${ic('bot')}다시 채점`,
       run: items => {
@@ -2370,6 +2372,7 @@ const ACT = {
       },
     });
     let reread = false; const rg = $('#rgread'); if (rg) rg.onchange = () => { reread = rg.checked; };
+    const rd = $('#rgdir'); if (rd) rd.oninput = () => { task.question = rd.value; save(); };
   },
   // 세특 다시 쓰기: 학생을 골라서(직접 고친 세특은 처음에 빼 둠)
   reseteuk(el) {

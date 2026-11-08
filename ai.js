@@ -514,7 +514,7 @@ const AI = (() => {
 - 학생 답: ${st.map(a => `${a.no}. ${a.text}`).join(' / ') || '(답 없음)'}${k.guide ? `\n- 판단 지침: ${k.guide}` : ''}`;
     }).join('\n\n');
     const parts = [{ text: taskBrief(task, false) }];
-    if (task.question) parts.push({ text: '선생님 정답 메모(가장 먼저 따른다):\n' + task.question });
+    if (task.question) parts.push({ text: '선생님의 채점 방향·정답 메모(무엇보다 먼저 따른다. 정답표·기준 문장보다 이 메모가 우선):\n' + task.question });
     parts.push({ text: '채점 기준별 자료:\n\n' + blocks });
     parts.push({ text: '학생 답 전체(참고):\n' + answers.map(a => `${a.no}. ${a.text}`).join('\n') });
     parts.push({ text: STRICT[lv] + `\n\n기준 ${task.criteria.length}개를 위 엄격도로 판단해 주세요. 기준마다 붙은 '그 문항의 정답'과 '학생 답'을 비교해, 정답과 같은 뜻이면 충족(맞음), 틀리거나 빠지면 미충족(틀림)입니다. 기준 문장은 그 문항에서 무엇을 보는지 알려 주는 참고이고, 판단의 잣대는 정답표입니다. 다른 문항의 답으로 판단하지 않습니다. evidence 는 학생 답에서 그대로 인용합니다.` });
