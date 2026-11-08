@@ -436,6 +436,7 @@ const AI = (() => {
       no: S('문항 번호(시험지 그대로)'),
       text: S('학생이 쓴 답을 그대로. 고쳐 쓰거나 요약하지 않는다. 지운 글자는 빼고, 읽을 수 없는 글자는 □, 답이 없으면 (답 없음)'),
     })),
+    form: S('시험지에 인쇄된 형 표시(예: A형, B형, 가형). 표시가 없거나 안 보이면 빈칸'),
     blank: B('답안 거의 전부가 비어 있으면 true'),
     unreadable: B('글씨가 흐리거나 잘려 읽기 어려운 곳이 많으면 true'),
   });
@@ -443,7 +444,7 @@ const AI = (() => {
     if (isMock()) { await sleep(300, signal); return { answers: (nos.length ? nos : ['1', '2', '3']).map(no => ({ no, text: `(모의) ${no}번 학생 답` })), blank: false, unreadable: false }; }
     const parts = [];
     images.forEach((b64, i) => { parts.push({ text: `학생 답안 ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
-    parts.push({ text: (nos.length ? `시험지 문항 번호: ${nos.join(', ')}\n` : '') + '문항마다 학생이 쓴 답을 그대로 옮겨 적어 주세요. 채점하지 마세요. 인쇄된 문제 글은 옮기지 않습니다.' });
+    parts.push({ text: (nos.length ? `참고 — 같은 반 정답표의 문항 번호: ${nos.join(', ')} (이 시험지의 번호가 다르면 이 시험지 번호를 따른다)\n` : '') + '문항마다 학생이 쓴 답을 그대로 옮겨 적어 주세요. 채점하지 마세요. 인쇄된 문제 글은 옮기지 않습니다. 시험지에 인쇄된 형 표시(A형 등)가 있으면 form 에 적어 주세요.' });
     const P = plan().read;
     return call({ system: '너는 손글씨 답안을 정확히 옮겨 적는 조수다. 검은 상자로 가린 곳은 개인정보이니 읽지 않는다. 학생이 지우고 다시 쓴 곳은 최종 답만 쓴다. 애매한 글자는 추측하지 말고 □ 로 둔다.', parts, schema: READ_SCHEMA, temperature: 0, signal, think: P.think, _model: P.model });
   }

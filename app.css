@@ -606,3 +606,8 @@ details.aid[open]>summary{margin-bottom:10px}
 .prog.indet{overflow:hidden;position:relative}
 .prog.indet i{position:absolute;width:35%!important;animation:indet 1.2s ease-in-out infinite}
 @keyframes indet{0%{left:-35%}100%{left:100%}}
+
+/* 학생별 시험지 형 */
+.sform{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:10px}
+.sform .in{width:80px;padding:4px 8px}
+.sform .note{flex-basis:100%}
