@@ -19,6 +19,52 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 const sum = a => a.reduce((x, y) => x + (Number(y) || 0), 0);
+// 시작 화면 잠금(비밀번호는 해시로만 둔다 — 공개된 앱이라 완전한 보안은 아님) · 조회수
+const GATE_H = '3acb6aa3dfb49029d1c7d1a4b709ddfc704bda9bc790937823260fa2b094765d', GATE_K = 'aigrader-gate', CREDIT = 'made by. 가운고 김태하';
+async function sha(t) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
+const gateOK = () => { try { return localStorage.getItem(GATE_K) === GATE_H || sessionStorage.getItem(GATE_K) === GATE_H; } catch (e) { return false; } };
+// 조회수: 같은 브라우저는 30분에 한 번만 센다(abacus 공개 카운터, 개인정보는 보내지 않음)
+const VIS_NS = 'hapsum14-aigrader', VIS_K = 'aigrader-visit';
+async function visits() {
+  const d = new Date(), day = `d${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  let last = 0; try { last = Number(localStorage.getItem(VIS_K)) || 0; } catch (e) {}
+  const hit = Date.now() - last > 30 * 60 * 1000 && !/^(localhost|127\.)/.test(location.hostname); // 내 컴퓨터에서 시험할 때는 세지 않음
+  const get = async k => { try { const r = await fetch(`https://abacus.jasoncameron.dev/${hit ? 'hit' : 'get'}/${VIS_NS}/${k}`); const j = await r.json(); return Number(j.value) || 0; } catch (e) { return null; } };
+  const [total, today] = await Promise.all([get('total'), get(day)]);
+  if (hit && total != null) try { localStorage.setItem(VIS_K, String(Date.now())); } catch (e) {}
+  return { total, today };
+}
+function visHTML(v) { return v && v.total != null ? `<span title="전체 조회수">👤 <b>${v.total.toLocaleString()}</b></span><span title="오늘 조회수">☀️ <b>${(v.today || 0).toLocaleString()}</b></span>` : ''; }
+let VISITS = null;
+function showGate() {
+  return new Promise(res => {
+    const g = document.createElement('div'); g.id = 'gate';
+    g.innerHTML = `<form class="gbox" autocomplete="off">
+      <div class="glogo"><i>${ic('logo')}</i></div>
+      <h1>AI 서논술형 채점</h1>
+      <p class="gsub">선생님 전용 도구입니다. 공유받은 비밀번호를 입력하세요.</p>
+      <input class="in" type="password" id="gpw" placeholder="비밀번호" inputmode="numeric" autofocus>
+      <label class="gchk"><input type="checkbox" id="gmem" checked> 이 기기에서 기억하기 <span class="faint">(공용 컴퓨터는 끄세요)</span></label>
+      <p class="gerr" id="gerr"></p>
+      <button class="btn primary wide" type="submit">열기</button>
+      <div class="gfoot"><b>${CREDIT}</b><span>무단 배포 시 공유가 중지될 수 있습니다.</span><div class="gvis" id="gvis"></div></div></form>`;
+    document.body.appendChild(g);
+    const f = g.querySelector('form'), pw = g.querySelector('#gpw');
+    setTimeout(() => pw.focus(), 50);
+    (VISITS || visits()).then(v => { VISITS = Promise.resolve(v); const el = g.querySelector('#gvis'); if (el) el.innerHTML = visHTML(v); });
+    f.onsubmit = async e => {
+      e.preventDefault();
+      if (await sha('aigrader:' + pw.value.trim()) !== GATE_H) { g.querySelector('#gerr').textContent = '비밀번호가 맞지 않아요.'; pw.select(); g.querySelector('.gbox').classList.remove('shake'); void g.offsetWidth; g.querySelector('.gbox').classList.add('shake'); return; }
+      try { (g.querySelector('#gmem').checked ? localStorage : sessionStorage).setItem(GATE_K, GATE_H); } catch (x) {}
+      g.classList.add('out'); setTimeout(() => g.remove(), 250); res();
+    };
+  });
+}
+function renderCredit() {
+  const el = document.getElementById('credit'); if (!el) return;
+  el.innerHTML = `<b>${CREDIT}</b>`;
+  (VISITS || (VISITS = visits())).then(v => { el.innerHTML = `<b>${CREDIT}</b>${v && v.total != null ? `<span class="cvis">${visHTML(v)}</span>` : ''}`; });
+}
 const GCK = 'aigrader-gc';
 function gcLater(clsId) { try { const a = JSON.parse(localStorage.getItem(GCK) || '[]'); if (!a.includes(clsId)) a.push(clsId); localStorage.setItem(GCK, JSON.stringify(a)); } catch (e) {} }
 async function gcImgs() {
@@ -554,7 +600,7 @@ function renderSide() {
     <div class="sfoot">
       <button class="subj" data-act="settings">${ic('gear')}<span class="nm">설정</span></button>
       <button class="subj" data-act="help">${ic('help')}<span class="nm">도움말</span></button>
-      <div class="foot">판 ${esc(window.APP_VERSION || '')} · <a href="privacy.html" target="_blank">개인정보 처리방침</a></div></div>
+      <div class="foot"><div id="credit" class="credit"></div>판 ${esc(window.APP_VERSION || '')} · <a href="privacy.html" target="_blank">개인정보 처리방침</a></div></div>
     <nav id="mnav">
       <a href="#/" class="mhome">${ic('logo')}처음</a>
       <button data-act="sheet" data-k="course">${ic('book')}과목·반</button>
@@ -565,6 +611,7 @@ function renderSide() {
   let tq = null;
   q.addEventListener('input', () => { clearTimeout(tq); tq = setTimeout(() => { F.q = q.value; route({ keepSide: true }); }, 200); });
   q.addEventListener('keydown', e => { if (e.key === 'Escape') { q.value = ''; F.q = ''; route({ keepSide: true }); q.blur(); } });
+  renderCredit();
 }
 function scope(parts) {
   $('#scope').innerHTML = parts.length
@@ -900,12 +947,11 @@ function vTask(tid) {
       <button class="btn danger sm" data-act="deltask" data-id="${t.id}">수행평가 지우기</button><a class="btn primary" href="#/c/${course.id}">완료</a></div></div>
   <div class="card">
     <div class="sec-h">${ICON.doc}기본 정보</div>
-    <div class="grid2">
+    <div class="tinfo">
       <div><label class="f">이름</label><input class="in" data-f="name" value="${esc(t.name)}"></div>
-      <div class="row" style="gap:12px;align-items:end">
-        <div><label class="f">만점</label><input class="in num" type="number" data-f="maxScore" value="${t.maxScore}"></div>
-        <div><label class="f">평가 방법</label><input class="in" style="width:120px" data-f="method" value="${esc(t.method || '')}"></div>
-        <div><label class="f">시기</label><input class="in" style="width:110px" data-f="period" value="${esc(t.period || '')}"></div></div>
+      <div><label class="f">만점</label><input class="in" type="number" data-f="maxScore" value="${t.maxScore}"></div>
+      <div><label class="f">평가 방법</label><input class="in" data-f="method" value="${esc(t.method || '')}" placeholder="예: 논술"></div>
+      <div><label class="f">시기</label><input class="in" data-f="period" value="${esc(t.period || '')}" placeholder="예: 10월 3주"></div>
     </div>
     <label class="f">수행 과제</label><textarea class="in" rows="2" data-f="assignment">${esc(t.assignment || '')}</textarea>
     ${t.standards.length ? `<label class="f">성취기준</label><div class="small">${t.standards.map(s => `<div><b>${esc(s.code)}</b> ${esc(s.text)}</div>`).join('')}</div>` : ''}
@@ -2274,35 +2320,46 @@ function renderQuota() {
 
 /* ================= 도움말 ================= */
 const HELP = [
-  ['start', '시작하기', `<ol class="hsteps">
-    <li><b>설정</b>에 Gemini API 키 넣기 <a href="${KEY_URL}" target="_blank" rel="noopener">무료 발급 ↗</a></li>
-    <li>첫 화면에 <b>평가계획서</b>(hwp·pdf) 올리기 → 채점 기준이 정리됨</li>
-    <li>수행평가 카드의 <b>+ 반 추가</b> → 답안 스캔 PDF 올리기</li>
-    <li><b>이름 가리기</b> → <b>AI 채점</b> → 학생마다 확인하고 <b>채점 완료</b></li>
-    <li><b>세특 만들기</b> → 복사하거나 엑셀로 내보내기</li></ol>`],
-  ['key', 'API 키 발급', `<ol class="hsteps">
+  ['start', '🚀 시작하기', `<div class="hflow">
+    <div class="hf"><i>🔑</i><b>API 키</b><span>설정에 무료 키 넣기<br><a href="${KEY_URL}" target="_blank" rel="noopener">무료 발급 ↗</a></span></div>
+    <div class="hf"><i>📄</i><b>평가계획서</b><span>hwp·pdf 올리면<br>채점 기준이 정리돼요</span></div>
+    <div class="hf"><i>🏫</i><b>반 추가</b><span>답안 스캔 PDF 올리기</span></div>
+    <div class="hf"><i>🙈</i><b>이름 가리기</b><span>학번·이름 칸 덮기</span></div>
+    <div class="hf"><i>🤖</i><b>AI 채점</b><span>점수와 세특이<br>함께 채워져요</span></div>
+    <div class="hf"><i>✅</i><b>확인·완료</b><span>학생마다 보고<br>채점 완료</span></div>
+    <div class="hf"><i>📋</i><b>내보내기</b><span>세특 복사·엑셀</span></div></div>`],
+  ['grade', '🤖 채점', `<ul class="hlist">
+    <li><i>📑</i><div><b>정답표</b> — 첫 답안지로 문항별 정답을 만들어요. 학생 몇 명을 비교해 <b>정답이 하나인 문항 / 학생마다 다른 문항 / 열린 답</b>을 나눠요. 한 번 확인하면 같은 형 반 모두에 써요.</div></li>
+    <li><i>🧭</i><div><b>채점 방향 메모</b> — "물어본 것에 성실히 답하면 정답"처럼 적으면 AI 가 가장 먼저 따라요. (채점 기준 화면 · 다시 채점 창)</div></li>
+    <li><i>⚖️</i><div><b>관대 · 보통 · 엄격</b> — 답이 얼마나 맞아야 ✓ 인지 정해요.</div></li>
+    <li><i>✍️</i><div><b>선생님 판단이 최종</b> — 체크를 바꾸면 점수와 세특이 그 판단을 따라요. <span class="mark t">선생님 ✓</span> 로 보여요.</div></li>
+    <li><i>🔍</i><div><b>잘못 읽었을 때</b> — 'AI 가 읽은 글'에서 고치고 <b>다시 판단</b>.</div></li>
+    <li><i>🔤</i><div><b>시험지 형</b> — 학생마다 A·B형을 읽어 그 형의 정답표로 채점해요.</div></li>
+    <li><i>⏳</i><div>오래 걸리는 일은 <b>오른쪽 아래</b>에서 돌아가요. 그동안 다른 일을 해도 돼요.</div></li></ul>`],
+  ['seteuk', '✨ 세특', `<ul class="hlist">
+    <li><i>⚡</i><div><b>채점하면 바로</b> 세특 칸이 채워져요(약 250~300바이트, '○○ 활동에서는 …함.').</div></li>
+    <li><i>📝</i><div>학생이 <b>실제로 쓴 내용만</b> 써요. 백지면 세특을 쓰지 않아요.</div></li>
+    <li><i>🔄</i><div>판단을 바꾸면 <span class="pill ai">세특 다시</span> 표시 → <b>채점 완료</b>를 누르면 바뀐 판단대로 다시 써요.</div></li>
+    <li><i>👀</i><div><b>관찰 메모</b>를 적으면 더 개별화돼요. 직접 고친 세특은 다시 채점해도 그대로 둬요.</div></li></ul>`],
+  ['pages', '🗂️ 답안 나누기', `<ul class="hlist">
+    <li><i>✋</i><div>쪽을 <b>끌어서</b> 옮겨요. 여러 쪽은 네모(또는 Ctrl·Shift)로 골라 함께.</div></li>
+    <li><i>➡️</i><div>쪽의 <b>오른쪽</b>에 놓으면 그 학생에 붙고, 학생 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생.</div></li>
+    <li><i>🔃</i><div>쪽마다 <b>↻</b>, 전체는 <b>쪽 방향</b> 줄에서. 올리면 방향을 자동으로 맞춰요.</div></li>
+    <li><i>🗑️</i><div>고른 쪽 <b>지우기</b>, ⋯ 에서 <b>파일 바꾸기 · 그림 모두 지우기</b>.</div></li></ul>`],
+  ['key', '🔑 API 키', `<ol class="hsteps">
     <li><a href="${KEY_URL}" target="_blank" rel="noopener"><b>Google AI Studio ↗</b></a> 에 구글 계정으로 들어가기</li>
     <li><b>Create API key</b> 누르기</li>
-    <li><code>AIza…</code> 로 시작하는 키를 복사해 <b>설정</b>에 붙여 넣기</li></ol>
-    <p class="small muted">무료 키는 분당 사용량 한도가 있어요. 한도에 걸리면 앱이 다른 모델로 바꿔 이어 갑니다.</p>`],
-  ['grade', '채점', `<ul>
-    <li><b>정답표</b>: 처음 AI 채점 때 반의 첫 답안지로 시험지 형(A·C형…)과 문항별 정답을 만들어요. 한 번 확인·수정하면 같은 형 반 모두에 쓰여요.</li>
-    <li><b>AI 채점</b>: 답을 문항별로 읽은 뒤 기준마다 판단해 ✓/✗ 를 채워요. 두 번 판단이 다르거나 근거가 답안에 없으면 <b>애매</b>로 표시돼요.</li>
-    <li><b>잘못 읽었을 때</b>: 'AI 가 읽은 글'에서 답을 고치고 <b>다시 판단</b>을 누르세요.</li>
-    <li><b>관대하게 · 보통 · 엄격하게</b>: 답이 기준에 얼마나 맞아야 ✓ 인지 정합니다.</li>
-    <li>한꺼번에 하는 일은 오른쪽 아래에서 돌아가니, 그동안 다른 일을 해도 됩니다.</li>
-    <li><b>이름 가리기</b>: 학번·이름 칸을 넉넉하게 덮으면 AI 로 보낼 때만 검게 칠합니다.</li></ul>`],
-  ['seteuk', '세특', `<ul>
-    <li>수행평가 하나에 약 250~300바이트, '○○ 수행평가에서는 …함.' 두 문장 틀로 씁니다.</li>
-    <li><b>관찰 메모</b>에 수업 중 모습을 적으면 더 개별화됩니다.</li>
-    <li>금지어·특수문자·학생 입장 표현은 빨간 글씨로 알려 줍니다.</li></ul>`],
-  ['save', '저장', `<ul>
-    <li>기록은 이 브라우저에 저장됩니다. <b>구글 로그인</b>하면 내 드라이브에도 저장되어 다른 컴퓨터에서 이어 할 수 있어요.</li>
-    <li>AI 를 쓸 때만, 이름을 가린 답안 그림이 Google Gemini 로 갑니다.</li></ul>`],
-  ['keys', '단축키', `<div class="kgrid">
+    <li><code>AIza…</code> 로 시작하는 키를 복사해 <b>⚙️ 설정</b>에 붙여 넣기</li></ol>
+    <p class="small muted">💡 무료 키는 하루 한도가 있어요. 넘으면 다른 모델로 이어 가고, 한국 시각 오후 5시에 다시 채워져요.</p>`],
+  ['save', '💾 저장·되돌리기', `<ul class="hlist">
+    <li><i>💻</i><div>기록은 <b>이 브라우저</b>에 저장돼요. <b>구글 로그인</b>하면 내 드라이브에도 저장돼 다른 컴퓨터에서 이어 해요.</div></li>
+    <li><i>↩️</i><div>지우기·옮기기·합치기는 위쪽 <b>↶ 되돌리기</b>(Ctrl+Z)로 되돌려요.</div></li>
+    <li><i>🔒</i><div>AI 를 쓸 때만, <b>이름을 가린</b> 답안이 Google Gemini 로 가요.</div></li></ul>`],
+  ['keys', '⌨️ 단축키', `<div class="kgrid">
     <span><span class="kbd">←</span><span class="kbd">→</span></span><span>이전·다음 학생</span>
     <span><span class="kbd">1</span>~<span class="kbd">9</span></span><span>기준 체크</span>
     <span><span class="kbd">Ctrl</span>+<span class="kbd">Enter</span></span><span>채점 완료 후 다음</span>
+    <span><span class="kbd">Ctrl</span>+<span class="kbd">Z</span> / <span class="kbd">Y</span></span><span>되돌리기 / 다시 하기</span>
     <span><span class="kbd">Esc</span></span><span>목록으로</span>
     <span><span class="kbd">/</span></span><span>찾기</span>
     <span><span class="kbd">?</span></span><span>도움말</span></div>`],
@@ -2911,6 +2968,7 @@ function renderGsync() {
   try { if (localStorage.getItem('aigrader-sideoff')) document.body.classList.add('side-off'); } catch (e) {}
   themeLabel();
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', themeLabel);
+  if (!gateOK()) await showGate(); else VISITS = visits(); // 시작 화면 잠금
   try { const st = await DB.get('kv', 'state'); if (st && st.courses) S = st; }
   catch (e) { toast('저장소를 열 수 없습니다(사생활 보호 창?). 이 창을 닫으면 기록이 사라집니다.', 6000); }
   // 브라우저가 공간이 부족할 때 기록을 지우지 않도록 요청(지원하는 브라우저만)
