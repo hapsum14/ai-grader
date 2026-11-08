@@ -623,3 +623,5 @@ details.aid[open]>summary{margin-bottom:10px}
 .kr .krule{flex:1;min-width:180px;padding:4px 8px;font-size:12.5px}
 .kr .kwhy{flex-basis:100%}
 .qflag{border-left:3px solid var(--ai)}
+
+.whyin.dim{opacity:.5;text-decoration:line-through}

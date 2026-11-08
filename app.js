@@ -305,7 +305,9 @@ function seteukInfo(task, s, cls, no) {
     const ev = s.ai.criteria.filter(c => c.evidence && finalMet(task, s, c.index - 1)).map(c => `${c.index}번 기준 근거: ${c.evidence}`);
     if (ev.length) L.push(ev.join('\n'));
   }
-  if (s.feedback) L.push('교사 피드백: ' + s.feedback);
+  const aiFb = s.ai && s.feedback === s.ai.feedback;
+  if (s.feedback && !(changed && aiFb)) L.push((aiFb ? 'AI 피드백(참고): ' : '교사 피드백: ') + s.feedback);
+  if (changed) L.push('교사가 AI 판단을 바꾼 기준이 있다. 교사가 충족으로 바꾼 기준은 그 기준을 충족한 것으로 보고 긍정적으로 쓰며, AI 가 찾은 부족한 점은 쓰지 않는다.');
   if (s.memo) L.push('교사 관찰 메모(중요): ' + s.memo);
   return L.join('\n');
 }
@@ -1360,7 +1362,8 @@ function vGrade(kid, no) {
     const mine = s.creason && s.creason[i] != null;
     const why = G.why && (a || mine) ? `<div class="why">
         ${a && a.evidence ? `<q>${esc(a.evidence)}</q>` : ''}
-        <textarea class="in whyin" data-wi="${i}" rows="2" placeholder="채점 근거">${esc(mine ? s.creason[i] : (a && a.reason) || '')}</textarea>
+        ${a && s.touched && finalMet(task, s, i) !== !!a.met && !mine ? `<div class="small" style="color:var(--accent);margin:2px 0 4px">선생님 판단(${finalMet(task, s, i) ? '충족' : '미충족'})이 최종이에요. 아래 AI 근거는 점수·세특에 쓰지 않아요.</div>` : ''}
+        <textarea class="in whyin ${a && s.touched && finalMet(task, s, i) !== !!a.met && !mine ? 'dim' : ''}" data-wi="${i}" rows="2" placeholder="채점 근거">${esc(mine ? s.creason[i] : (a && a.reason) || '')}</textarea>
         ${mine && a && a.reason && s.creason[i] !== a.reason ? `<div class="aiorig"><span>AI: ${esc(a.reason)}</span><button class="lnk" data-act="whyreset" data-i="${i}">AI 것으로</button></div>` : ''}</div>` : '';
     return `<div class="citem"><label class="crow">
       ${task.mode === 'points' ? `<span class="cno">${i + 1}</span>` : `<input type="checkbox" data-act="chk" data-i="${i}" ${checked ? 'checked' : ''}>`}
