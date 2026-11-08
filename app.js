@@ -504,6 +504,7 @@ function taskCard(t) {
         <button data-act="renametask" data-id="${t.id}">${ic('pen')}이름 바꾸기</button>
         <button data-act="copytask" data-id="${t.id}" data-stay="1">${ic('copy')}복사해서 하나 더</button>
         ${partsOf(t) && !t.classes.length ? `<button data-act="splittask" data-id="${t.id}" data-stay="1">${ic('more')}평가 요소별로 나누기</button>` : ''}
+        ${!t.classes.length ? `<button data-act="mergetask" data-id="${t.id}">${ic('copy')}다른 수행평가와 합치기</button>` : ''}
         <button data-act="addclass" data-id="${t.id}">${ic('plus')}반 추가</button>
         <button class="danger" data-act="deltask" data-id="${t.id}" data-stay="1">${ic('trash')}수행평가 지우기</button></div></details></div></div>
     ${ks || '<div class="tk-empty">답안을 올릴 반을 추가하세요</div>'}
@@ -568,34 +569,121 @@ function partsOf(t) {
     return { no, name: p.name || `평가 요소 ${no}`, kind: p.kind || '', crit, scale, max };
   }).filter(p => p.crit.length);
 }
-function splitTask(course, t) {
+// 요소 이름표: 형태(활동형·논술형)가 겹치면 차시나 순서를 붙인다
+function partLabel(ps, p) {
+  const dup = ps.filter(x => x.kind && x.kind === p.kind).length > 1;
+  const cha = (p.name.match(/(\d+)\s*차시/) || [])[1];
+  const short = p.name.length > 18 ? p.name.slice(0, 18) + '…' : p.name;
+  return p.kind ? (dup ? `${p.kind} ${cha ? cha + '차시' : p.no}` : p.kind) : short;
+}
+// '활동형 1차시', '활동형 2차시', '활동형 3차시' → '활동형 1~3차시'
+function joinLabels(ls) {
+  if (ls.length < 2) return ls.join('');
+  const m = ls.map(l => l.match(/^(.*?)\s*(\d+)\s*차시$/));
+  if (m.every(x => x && x[1] === m[0][1])) {
+    const ns = m.map(x => Number(x[2])).sort((a, b) => a - b);
+    if (ns.every((n, k) => !k || n === ns[k - 1] + 1)) return `${m[0][1]} ${ns[0]}~${ns[ns.length - 1]}차시`;
+  }
+  // 형태가 섞여도 차시가 이어지면 '활동형·논술형 1~3차시'
+  if (m.every(Boolean)) {
+    const ns = m.map(x => Number(x[2])).sort((a, b) => a - b);
+    if (ns.every((n, k) => !k || n === ns[k - 1] + 1)) return `${[...new Set(m.map(x => x[1]))].join('·')} ${ns[0]}~${ns[ns.length - 1]}차시`;
+  }
+  return ls.join('·');
+}
+// 요소 묶음 하나로 수행평가 하나 만들기(묶음에 요소가 여럿이면 요소별 척도를 그대로 둔다)
+function taskFromParts(t, ps, group) {
+  const sel = ps.filter(p => group.includes(p.no));
+  const one = sel.length === 1;
+  const base = t.splitFrom || t.name.replace(/\([^()]*\)\s*$/, '').trim() || t.name;
+  return newTask(Object.assign({}, JSON.parse(JSON.stringify(t)), {
+    name: `${base}(${joinLabels(sel.map(p => partLabel(ps, p)))})`,
+    maxScore: sum(sel.map(p => p.max)) || t.maxScore,
+    criteria: sel.flatMap((p, k) => p.crit.map(c => Object.assign({}, c, { part: one ? 1 : k + 1 }))),
+    scale: sel.flatMap((p, k) => p.scale.map(x => Object.assign({}, x, { part: one ? 1 : k + 1 }))),
+    parts: one ? [] : sel.map(p => ({ name: p.name, kind: p.kind })), splitFrom: base, keys: {},
+  }));
+}
+function splitTask(course, t, groups) {
   const ps = partsOf(t); if (!ps || t.classes.length) return 0;
-  // 이름: 형태(활동형·논술형)가 겹치면 차시나 순서를 붙인다
-  const label = p => {
-    const dup = ps.filter(x => x.kind && x.kind === p.kind).length > 1;
-    const cha = (p.name.match(/(\d+)\s*차시/) || [])[1];
-    const short = p.name.length > 18 ? p.name.slice(0, 18) + '…' : p.name;
-    return p.kind ? (dup ? `${p.kind} ${cha ? cha + '차시' : p.no}` : p.kind) : short;
-  };
-  const made = ps.map(p => newTask(Object.assign({}, JSON.parse(JSON.stringify(t)), {
-    name: `${t.name}(${label(p)})`, maxScore: p.max || t.maxScore,
-    criteria: p.crit.map(c => Object.assign({}, c, { part: 1 })), scale: p.scale.map(x => Object.assign({}, x, { part: 1 })),
-    parts: [], splitFrom: t.name, keys: {},
-  })));
+  groups = (groups || ps.map(p => [p.no])).filter(g => g.length);
+  if (groups.length < 2) return 0;
+  const made = groups.map(g => taskFromParts(t, ps, g));
   const i = course.tasks.indexOf(t); course.tasks.splice(i, 1, ...made);
   return made.length;
 }
+function canMerge(t) { return !t.classes.length; }
+function mergeTasks(course, list, name) {
+  const parts = [], criteria = [], scale = [];
+  list.forEach(t => {
+    const ps = partsOf(t) || [{ name: t.name, kind: ((t.name.match(/\(([^()]*)\)\s*$/) || [])[1] || ''), crit: t.criteria, scale: t.scale || [], max: t.maxScore }];
+    ps.forEach(p => {
+      const no = parts.length + 1; parts.push({ name: p.name, kind: p.kind });
+      p.crit.forEach(c => criteria.push(Object.assign({}, c, { part: no })));
+      p.scale.forEach(x => scale.push(Object.assign({}, x, { part: no })));
+    });
+  });
+  const base = list[0];
+  const m = newTask(Object.assign({}, JSON.parse(JSON.stringify(base)), {
+    name, maxScore: sum(list.map(t => Number(t.maxScore) || 0)), criteria, scale, parts, keys: {},
+    specials: base.specials || [], splitFrom: list.every(t => t.splitFrom && t.splitFrom === base.splitFrom) ? base.splitFrom : '',
+    assignment: [...new Set(list.map(t => t.assignment).filter(Boolean))].join('\n'),
+  }));
+  const at = Math.min(...list.map(t => course.tasks.indexOf(t)));
+  course.tasks = course.tasks.filter(t => !list.includes(t)); course.tasks.splice(at, 0, m);
+  return m;
+}
+function mergeName(list) {
+  const inner = list.map(t => (t.name.match(/\(([^()]*)\)\s*$/) || [])[1]);
+  const bases = list.map(t => t.name.replace(/\([^()]*\)\s*$/, '').trim());
+  if (inner.every(Boolean) && bases.every(b => b === bases[0])) return `${bases[0]}(${joinLabels(inner)})`;
+  return list.map(t => t.name).join(' + ');
+}
+function mergeAsk(course, firstId) {
+  const ts = course.tasks;
+  modal(`<h2>수행평가 합치기</h2>
+    <p class="small muted" style="margin:0 0 10px"><b>한 시험지(답안지)</b>에 함께 있는 수행평가를 하나로 합쳐 같이 채점해요. 채점 기준과 '○개 충족 → 점수' 표는 요소별로 그대로 두고 점수를 더해요.</p>
+    <div class="mg">${ts.map(t => `<label class="opt ${canMerge(t) ? '' : 'dis'}"><input type="checkbox" data-mg="${t.id}" ${t.id === firstId ? 'checked' : ''} ${canMerge(t) ? '' : 'disabled'}>
+      <span><b>${esc(t.name)}</b><small class="faint"> · ${t.maxScore}점 · 기준 ${t.criteria.length}개${canMerge(t) ? '' : ' · 반이 있어 합칠 수 없어요'}</small></span></label>`).join('')}</div>
+    <label class="f" style="margin-top:10px">합친 이름</label><input class="in" id="mgname">
+    <p class="small faint" id="mginfo" style="margin:6px 0 0"></p>
+    <div class="foot"><button class="btn" data-act="close">취소</button><button class="btn primary" id="mggo" disabled>${ic('check')}합치기</button></div>`);
+  let touched = false;
+  const sel = () => $$('#mbox [data-mg]:checked').map(cb => ts.find(t => t.id === cb.dataset.mg));
+  const upd = () => {
+    const l = sel(), modes = new Set(l.map(t => t.mode));
+    if (!touched) $('#mgname').value = l.length > 1 ? mergeName(l) : '';
+    $('#mginfo').textContent = l.length < 2 ? '두 개 이상 고르세요.' : modes.size > 1 ? '채점 방식(개수 세기/배점 더하기)이 다른 것은 합칠 수 없어요.' : `${l.length}개 → 만점 ${sum(l.map(t => Number(t.maxScore) || 0))}점 · 기준 ${sum(l.map(t => t.criteria.length))}개`;
+    $('#mggo').disabled = l.length < 2 || modes.size > 1;
+  };
+  $('#mgname').oninput = () => { touched = true; };
+  $('#mbox').onchange = e => { if (e.target.matches('[data-mg]')) upd(); };
+  upd();
+  $('#mggo').onclick = () => {
+    const l = sel(); const m = mergeTasks(course, l, $('#mgname').value.trim() || mergeName(l)); save(true);
+    closeModal(true); rerender(); toast(`'${m.name}'(으)로 합쳤어요. 다시 나누려면 ⋯ → 평가 요소별로 나누기.`, 4000);
+  };
+}
 function splitAsk(course, list, done) {
   modal(`<h2>평가 요소가 나뉜 수행평가가 있어요</h2>
-    <p class="small muted" style="margin:0 0 10px">평가 요소마다 시험지가 따로라면 나눠서 만드는 게 정확해요(정답표·채점이 시험지별로). 나눌 것을 고르세요.</p>
-    ${list.map(t => { const ps = partsOf(t); return `<label class="opt"><input type="checkbox" data-split="${t.id}" checked><span><b>${esc(t.name)}</b> · ${t.maxScore}점<br>
-      ${ps.map(p => `<small>→ ${esc(p.kind || '')}${p.kind ? ' · ' : ''}${esc(p.name.length > 30 ? p.name.slice(0, 30) + '…' : p.name)} · 기준 ${p.crit.length}개 · 최고 ${p.max}점</small>`).join('<br>')}</span></label>`; }).join('')}
+    <p class="small muted" style="margin:0 0 10px">시험지(답안지)마다 수행평가 하나로 나누면 정답표·채점이 정확해요. 요소마다 <b>어느 시험지에 있는지</b> 고르세요. <b>같은 번호</b>를 고른 요소는 하나로 함께 채점해요.</p>
+    ${list.map(t => { const ps = partsOf(t); const opts = no => ps.map((_, k) => `<option value="${k + 1}" ${k + 1 === no ? 'selected' : ''}>시험지 ${k + 1}</option>`).join('');
+      return `<div class="opt sp" data-sp="${t.id}"><label class="sph"><input type="checkbox" data-split="${t.id}" checked><b>${esc(t.name)}</b> · ${t.maxScore}점</label>
+      ${ps.map(p => `<div class="spr"><select class="in sm" data-spg="${p.no}">${opts(p.no)}</select><span>${esc(partLabel(ps, p))}<small class="faint"> · ${esc(p.name.length > 26 ? p.name.slice(0, 26) + '…' : p.name)} · 기준 ${p.crit.length}개 · ${p.max}점</small></span></div>`).join('')}
+      <div class="spv small muted"></div></div>`; }).join('')}
     <div class="foot"><button class="btn" id="spno">하나로 두기</button><button class="btn primary" id="spgo">${ic('check')}고른 것 나누기</button></div>`);
   $('#modal').dataset.lock = '1';
   const end = () => { delete $('#modal').dataset.lock; closeModal(true); save(true); done && done(); };
   $('#spno').onclick = end;
+  const groupsOf = box => { const m = {}; box.querySelectorAll('[data-spg]').forEach(sel => { (m[sel.value] = m[sel.value] || []).push(Number(sel.dataset.spg)); }); return Object.keys(m).sort((a, b) => a - b).map(k => m[k]); };
+  const preview = () => $$('#mbox [data-sp]').forEach(box => {
+    const t = course.tasks.find(x => x.id === box.dataset.sp), ps = partsOf(t), gs = groupsOf(box);
+    box.querySelector('.spv').innerHTML = gs.length < 2 ? '→ 모두 같은 시험지라 하나로 둬요' : '→ ' + gs.map(g => `<b>${esc(joinLabels(ps.filter(p => g.includes(p.no)).map(p => partLabel(ps, p))))}</b>(${sum(ps.filter(p => g.includes(p.no)).map(p => p.max))}점)`).join(' + ');
+  });
+  $('#mbox').onchange = e => { if (e.target.matches('[data-spg]')) preview(); };
+  preview();
   $('#spgo').onclick = () => {
-    let n = 0; $$('#mbox [data-split]:checked').forEach(cb => { const t = course.tasks.find(x => x.id === cb.dataset.split); if (t) n += splitTask(course, t); });
+    let n = 0; $$('#mbox [data-split]:checked').forEach(cb => { const t = course.tasks.find(x => x.id === cb.dataset.split); if (t) n += splitTask(course, t, groupsOf(cb.closest('[data-sp]'))); });
     if (n) toast(`평가 요소별로 ${n}개 수행평가를 만들었어요.`, 3000);
     end();
   };
@@ -618,6 +706,7 @@ function vCourse(cid) {
       <button data-act="renamecourse" data-id="${c.id}">${ic('pen')}이름 바꾸기</button>
       ${c.planText ? `<button data-act="showplan" data-id="${c.id}">${ic('task')}계획서 글 보기</button>` : ''}
       <button data-act="addtask" data-id="${c.id}">${ic('plus')}수행평가 직접 추가</button>
+      ${c.tasks.filter(canMerge).length > 1 ? `<button data-act="mergeask" data-id="${c.id}">${ic('copy')}수행평가 합치기</button>` : ''}
       ${c.tasks.some(t => partsOf(t) && !t.classes.length) ? `<button data-act="splitask" data-id="${c.id}">${ic('more')}평가 요소별로 나누기</button>` : ''}
       <button class="danger" data-act="delcourse" data-id="${c.id}">${ic('trash')}과목 지우기</button></div></details></div>
   <div class="tks">${c.tasks.map(t => taskCard(t)).join('')}<button class="tk tk-add" data-act="addtask" data-id="${c.id}">${ic('plus')}<b>수행평가 추가</b><span>빈 채점 기준으로 새로 만들기</span></button></div>
@@ -1940,6 +2029,8 @@ const ACT = {
     renderSide();
   },
   renametask(el) { startRename(el.dataset.id); },
+  mergetask(el) { const { course } = findTask(el.dataset.id); mergeAsk(course, el.dataset.id); },
+  mergeask(el) { mergeAsk(findCourse(el.dataset.id), ''); },
   quotahelp(el) { quotaHelp(!!el.closest('#mbox')); },
   why() { G.why = !G.why; try { localStorage.setItem('aigrader-why', G.why ? '1' : '0'); } catch (e) {} rerender(); },
   whyreset(el) { const s = stu(gctx.cls, gctx.no); if (s.creason) delete s.creason[el.dataset.i]; save(); rerender(); },

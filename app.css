@@ -561,3 +561,13 @@ details.aid[open]>summary{margin-bottom:10px}
 .tk-tools .ibtn{width:28px;height:28px}
 .tk-tools .ibtn .ic{width:15px;height:15px}
 .tk-tools .ibtn.del:hover{color:var(--bad);background:var(--bad-soft)}
+
+/* 나누기(시험지 묶기) · 합치기 */
+.opt.sp{display:block}
+.sph{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.spr{display:flex;gap:8px;align-items:center;margin:4px 0 0 24px;font-size:13.5px}
+.spr select{width:auto;flex:none;padding:3px 6px}
+.spv{margin:6px 0 0 24px}
+.mg{display:grid;gap:6px;max-height:46vh;overflow:auto}
+.opt.dis{opacity:.5}
+.tk-h>.tk-tools{flex:none}
