@@ -308,7 +308,10 @@ function seteukInfo(task, s, cls, no) {
   const aiFb = s.ai && s.feedback === s.ai.feedback;
   if (s.feedback && !(changed && aiFb)) L.push((aiFb ? 'AI 피드백(참고): ' : '교사 피드백: ') + s.feedback);
   if (changed) L.push('교사가 AI 판단을 바꾼 기준이 있다. 교사가 충족으로 바꾼 기준은 그 기준을 충족한 것으로 보고 긍정적으로 쓰며, AI 가 찾은 부족한 점은 쓰지 않는다.');
-  if (changed && s.ai && s.ai.observation) L.push('채점 때 쓴 세특 초안(AI 판단 기준). 이 글의 맥락·흐름·구체적 내용은 살리되, 교사가 틀림으로 바꾼 문항의 내용은 빼고 교사가 맞음으로 바꾼 문항의 내용은 학생 답에서 더해 고쳐 쓴다:\n' + s.ai.observation);
+  // 채점 때 쓴 세특 초안: 맥락·흐름은 살리고 다듬는다(선생님이 판단을 바꿨으면 그 판단대로 고친다)
+  if (s.ai && s.ai.observation) L.push(changed
+    ? '채점 때 쓴 세특 초안(AI 판단 기준). 이 글의 맥락·흐름·구체적 내용은 살리되, 교사가 틀림으로 바꾼 문항의 내용은 빼고 교사가 맞음으로 바꾼 문항의 내용은 학생 답에서 더해 고쳐 쓴다:\n' + s.ai.observation
+    : '채점 때 쓴 세특 초안. 이 글의 맥락·흐름·구체적 내용을 그대로 살려, 분량과 세특 규칙에 맞게만 다듬는다(새 내용을 지어내지 않음):\n' + s.ai.observation);
   if (s.memo) L.push('교사 관찰 메모(중요): ' + s.memo);
   return L.join('\n');
 }
