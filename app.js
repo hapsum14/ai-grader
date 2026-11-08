@@ -34,7 +34,7 @@ async function visits() {
   if (hit && total != null) try { localStorage.setItem(VIS_K, String(Date.now())); } catch (e) {}
   return { total, today };
 }
-function visHTML(v) { return v && v.total != null ? `<span title="전체 조회수">👤 <b>${v.total.toLocaleString()}</b></span><span title="오늘 조회수">☀️ <b>${(v.today || 0).toLocaleString()}</b></span>` : ''; }
+function visHTML(v) { return v && v.total != null ? `<span title="전체 방문">${ic('users')}전체 <b>${v.total.toLocaleString()}</b></span><span title="오늘 방문">${ic('sun')}오늘 <b>${(v.today || 0).toLocaleString()}</b></span>` : ''; }
 let VISITS = null;
 function showGate() {
   return new Promise(res => {
@@ -60,10 +60,17 @@ function showGate() {
     };
   });
 }
+// 본문 맨 아래 바닥글: 만든이 · 방문 수 · 개인정보 처리방침
 function renderCredit() {
-  const el = document.getElementById('credit'); if (!el) return;
-  el.innerHTML = `<b>${CREDIT}</b>`;
-  (VISITS || (VISITS = visits())).then(v => { el.innerHTML = `<b>${CREDIT}</b>${v && v.total != null ? `<span class="cvis">${visHTML(v)}</span>` : ''}`; });
+  let el = document.getElementById('appfoot');
+  if (!el) { el = document.createElement('footer'); el.id = 'appfoot'; const v = document.getElementById('view'); v.parentNode.insertBefore(el, v.nextSibling); }
+  const paint = v => {
+    el.innerHTML = `<div class="af-who"><span class="af-mark">${ic('logo')}</span><span><b>${CREDIT}</b><small>무단 배포 시 공유가 중지될 수 있습니다.</small></span></div>
+      <div class="af-side">${v && v.total != null ? `<span class="af-vis" title="같은 브라우저는 30분에 한 번 세요"><span>${ic('users')}전체 <b>${v.total.toLocaleString()}</b></span><span>${ic('sun')}오늘 <b>${(v.today || 0).toLocaleString()}</b></span></span>` : ''}
+        <a href="privacy.html" target="_blank">개인정보 처리방침</a></div>`;
+  };
+  if (!el.innerHTML) paint(null);
+  (VISITS || (VISITS = visits())).then(paint);
 }
 const GCK = 'aigrader-gc';
 function gcLater(clsId) { try { const a = JSON.parse(localStorage.getItem(GCK) || '[]'); if (!a.includes(clsId)) a.push(clsId); localStorage.setItem(GCK, JSON.stringify(a)); } catch (e) {} }
@@ -492,6 +499,7 @@ const IC = {
   logo: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
   book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7"/>',
   task: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 4.5a3 3 0 0 1 0 6M21 20a5.5 5.5 0 0 0-4-5.3"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
   todo: '<circle cx="12" cy="12" r="9"/>',
@@ -600,7 +608,7 @@ function renderSide() {
     <div class="sfoot">
       <button class="subj" data-act="settings">${ic('gear')}<span class="nm">설정</span></button>
       <button class="subj" data-act="help">${ic('help')}<span class="nm">도움말</span></button>
-      <div class="foot"><div id="credit" class="credit"></div>판 ${esc(window.APP_VERSION || '')} · <a href="privacy.html" target="_blank">개인정보 처리방침</a></div></div>
+      <div class="foot">판 ${esc(window.APP_VERSION || '')}</div></div>
     <nav id="mnav">
       <a href="#/" class="mhome">${ic('logo')}처음</a>
       <button data-act="sheet" data-k="course">${ic('book')}과목·반</button>
