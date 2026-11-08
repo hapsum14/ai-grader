@@ -483,9 +483,9 @@ const AI = (() => {
     if (task.question) parts.push({ text: '선생님 정답 메모(가장 먼저 따른다):\n' + task.question });
     parts.push({ text: '채점 기준별 자료:\n\n' + blocks });
     parts.push({ text: '학생 답 전체(참고):\n' + answers.map(a => `${a.no}. ${a.text}`).join('\n') });
-    parts.push({ text: STRICT[lv] + `\n\n기준 ${task.criteria.length}개를 위 엄격도로 판단해 주세요. 기준마다 붙은 '학생 답'과 '정답'을 비교해 판단하고, 다른 문항의 답으로 판단하지 않습니다. evidence 는 학생 답에서 그대로 인용합니다.` });
+    parts.push({ text: STRICT[lv] + `\n\n기준 ${task.criteria.length}개를 위 엄격도로 판단해 주세요. 기준마다 붙은 '그 문항의 정답'과 '학생 답'을 비교해, 정답과 같은 뜻이면 충족(맞음), 틀리거나 빠지면 미충족(틀림)입니다. 기준 문장은 그 문항에서 무엇을 보는지 알려 주는 참고이고, 판단의 잣대는 정답표입니다. 다른 문항의 답으로 판단하지 않습니다. evidence 는 학생 답에서 그대로 인용합니다.` });
     return call({ system: `너는 한국 고등학교 수행평가 채점을 돕는 조수다. 최종 점수는 교사가 정한다.
-- 정답표의 정답을 기준으로 판단한다. 학생 답에 없는 내용을 지어내거나, 맞게 쓴 답을 틀렸다고 하지 않는다.
+- 문항마다 정답표의 정답과 학생 답을 비교해 맞음/틀림을 판단한다. 채점 기준 문장은 참고로만 쓴다. 학생 답에 없는 내용을 지어내거나, 맞게 쓴 답을 틀렸다고 하지 않는다.
 - 표현이 서툴러도 핵심이 정답과 같으면 맞음으로 본다. 판단이 애매하면 reason 에 '애매함'이라고 밝힌다.
 - 충족을 가르는 선은 사용자가 준 채점 엄격도를 따른다.`, parts, schema: JUDGE_SCHEMA, temperature: 0.1, signal, think: o.think === undefined ? 'low' : o.think, _model: o.model });
   }

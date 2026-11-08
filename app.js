@@ -273,22 +273,35 @@ function levelOf(task, s) {
   task.criteria.forEach((c, i) => { if (s.touched ? !!s.checks[i] : !!(s.ai && (s.ai.criteria.find(x => x.index === i + 1) || {}).met)) met++; });
   const r = met / n; return r >= 0.8 ? '상' : r >= 0.5 ? '중' : '하';
 }
-function seteukInfo(task, s) {
+// 기준(문항)마다 최종 판단: 선생님이 고쳤으면 선생님 것, 아니면 AI 것
+function finalMet(task, s, i) {
+  const a = s.ai && s.ai.criteria.find(x => x.index === i + 1);
+  if (!s.touched) return !!(a && a.met);
+  return task.mode === 'points' ? (Number(s.pts[i]) || 0) > 0 : !!s.checks[i];
+}
+function seteukInfo(task, s, cls, no) {
   const L = [];
   const sc = scoreOf(task, s);
   L.push(`받은 점수: ${sc == null ? '미정' : sc}/${task.maxScore}`);
-  const met = [], unmet = [];
-  task.criteria.forEach((c, i) => {
-    const ok = s.touched ? !!s.checks[i] : !!(s.ai && (s.ai.criteria.find(x => x.index === i + 1) || {}).met);
-    (ok ? met : unmet).push(c.text);
+  const key = cls ? keyFor(task, cls, no) : null;
+  const ans = (s.ai && s.ai.answers) || [];
+  const pickA = q => { const want = String(q || '').split(/[,\s]+/).filter(Boolean); return want.length ? ans.filter(a => want.some(w => a.no === w || a.no.startsWith(w + '-') || a.no.startsWith(w + '(') || a.no.startsWith(w + '.'))) : []; };
+  let changed = 0, met = 0;
+  const rows = task.criteria.map((c, i) => {
+    const a = s.ai && s.ai.criteria.find(x => x.index === i + 1);
+    const ok = finalMet(task, s, i); if (ok) met++;
+    const ch = s.touched && a && !!a.met !== ok; if (ch) changed++;
+    const q = key && key.crit && key.crit[i] ? key.crit[i].qnos : '';
+    const sa = pickA(q).map(x => `${x.no}. ${x.text}`).join(' / ');
+    const why = s.creason && s.creason[i] ? ` — 교사 근거: ${s.creason[i]}` : '';
+    return `${i + 1}. ${q ? `[문항 ${q}] ` : ''}${c.text} → ${ok ? '맞음' : '틀림(세특에 쓰지 않음)'}${ch ? ' (교사가 AI 판단을 바꿈 — 교사 판단을 따른다)' : ''}${why}${sa ? `\n   학생 답: ${sa}` : ''}`;
   });
-  L.push(`성취 수준: ${levelOf(task, s)}${s.special != null ? '(특수 상황)' : ''} (채점 기준 ${task.criteria.length}개 중 ${met.length}개 충족)`);
-  L.push('충족한 채점 기준: ' + (met.join(' / ') || '없음'));
-  L.push('충족하지 못한 채점 기준(세특에 쓰지 않음, 참고만): ' + (unmet.join(' / ') || '없음'));
+  L.push(`성취 수준: ${levelOf(task, s)}${s.special != null ? '(특수 상황)' : ''} (채점 기준 ${task.criteria.length}개 중 ${met}개 맞음)`);
+  L.push('문항별 최종 판단(교사 판단이 최종). 맞은 문항의 학생 답만 세특의 근거로 쓰고, 틀린 문항의 내용은 잘한 점으로 쓰지 않는다:\n' + rows.join('\n'));
   if (s.ai) {
-    if (s.ai.transcript) L.push('학생 답안(인식 결과):\n' + s.ai.transcript);
-    if (s.ai.observation) L.push('관찰 요약: ' + s.ai.observation);
-    const ev = s.ai.criteria.filter(c => c.met && c.evidence).map(c => `${c.index}번 기준 근거: ${c.evidence}`);
+    if (s.ai.transcript) L.push('학생 답안 전체(참고. 위에서 틀림인 문항의 내용은 쓰지 않는다):\n' + s.ai.transcript);
+    if (s.ai.observation && !changed) L.push('관찰 요약: ' + s.ai.observation);
+    const ev = s.ai.criteria.filter(c => c.evidence && finalMet(task, s, c.index - 1)).map(c => `${c.index}번 기준 근거: ${c.evidence}`);
     if (ev.length) L.push(ev.join('\n'));
   }
   if (s.feedback) L.push('교사 피드백: ' + s.feedback);
@@ -1162,7 +1175,7 @@ function vClass(kid) {
     const b = s && s.seteuk ? App.bytes(s.seteuk) : 0;
     const sf = s && s.form != null && s.form !== formOf(cls) ? s.form : null;
     return `<a class="item stu" href="#/g/${cls.id}/${no}">
-      <span class="no">${no}</span><span>${pillOf(st)}${sf != null ? ` <span class="pill ai" title="반과 다른 시험지 형">${esc(sf || '형 없음')}${sf ? '형' : ''}</span>` : ''}${s && s.formWarn ? ` <span class="pill bad" title="${esc(s.formWarn)}">시험지?</span>` : ''}</span>
+      <span class="no">${no}</span><span>${pillOf(st)}${sf != null ? ` <span class="pill ai" title="반과 다른 시험지 형">${esc(sf || '형 없음')}${sf ? '형' : ''}</span>` : ''}${s && s.formWarn ? ` <span class="pill bad" title="${esc(s.formWarn)}">시험지?</span>` : ''}${s && s.seteuk && s.seteukStale ? ' <span class="pill ai" title="채점 판단을 바꾼 뒤라 세특을 다시 써야 해요">세특 다시</span>' : ''}</span>
       <span class="sc">${sc == null ? '<span class="faint">-</span>' : sc}${aisc != null && aisc !== sc ? `<small class="faint"> AI ${aisc}</small>` : ''}</span>
       <span class="pv">${s && s.seteuk ? esc(s.seteuk) : `<span class="faint">${sub ? '' : '답안 없음'}</span>`}</span>
       <span class="r">${b ? `<span class="bt ${b > max ? 'bad' : ''}">${b}B</span><button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="세특 복사">${ic('copy')}</button>` : ''}</span></a>`;
@@ -1347,8 +1360,8 @@ function vGrade(kid, no) {
         ${mine && a && a.reason && s.creason[i] !== a.reason ? `<div class="aiorig"><span>AI: ${esc(a.reason)}</span><button class="lnk" data-act="whyreset" data-i="${i}">AI 것으로</button></div>` : ''}</div>` : '';
     return `<div class="citem"><label class="crow">
       ${task.mode === 'points' ? `<span class="cno">${i + 1}</span>` : `<input type="checkbox" data-act="chk" data-i="${i}" ${checked ? 'checked' : ''}>`}
-      <span class="ct">${task.mode === 'points' ? '' : `<span class="cno">${i + 1}</span>`}${esc(c.text)}${kq(i) ? ` <span class="qtag" title="판단할 시험지 문항(정답표)">문항 ${esc(kq(i))}</span>` : ''}</span>
-      <span class="row" style="gap:6px">${a && a.unsure ? `<span class="mark u" title="${esc(a.unsure)} — 직접 확인해 주세요">애매</span>` : ''}${a ? `<span class="mark ${a.met ? 'y' : 'n'}" title="AI 판단">${a.met ? 'AI ✓' : 'AI ✗'}</span>` : ''}
+      <span class="ct">${task.mode === 'points' ? '' : `<span class="cno">${i + 1}</span>`}${esc(c.text)}${kq(i) ? ` <span class="qtag" title="이 기준은 이 문항의 정답으로 판단해요">문항 ${esc(kq(i))}</span>` : ''}</span>
+      <span class="row" style="gap:6px">${a && a.unsure ? `<span class="mark u" title="${esc(a.unsure)} — 직접 확인해 주세요">애매</span>` : ''}${a ? `<span class="mark ${a.met ? 'y' : 'n'}" title="AI 판단">${a.met ? 'AI ✓' : 'AI ✗'}</span>` : ''}${a && s.touched && finalMet(task, s, i) !== !!a.met ? `<span class="mark t" title="선생님 판단이 최종이에요(세특도 이 판단으로)">선생님 ${finalMet(task, s, i) ? '✓' : '✗'}</span>` : ''}
         ${task.mode === 'points' ? `<input class="ptinput" type="number" step="0.5" min="0" max="${c.points}" value="${s.touched ? (s.pts[i] || 0) : ''}" data-act="pt" data-i="${i}"><span class="faint small">/${c.points}</span>` : ''}</span>
     </label>${why}</div>`;
   }).join('');
@@ -1381,7 +1394,7 @@ function vGrade(kid, no) {
     $$('[data-act="pt"]').forEach(el => el.addEventListener('change', () => {
       if (!s.touched) { s.pts = Array(n).fill(0); s.checks = Array(n).fill(false); }
       s.pts[Number(el.dataset.i)] = Math.min(Number(el.max), Math.max(0, Number(el.value) || 0));
-      s.touched = true; s.override = null; s.special = null; save(); rerender();
+      s.touched = true; s.override = null; s.special = null; if (s.seteuk) s.seteukStale = true; save(); rerender();
     }));
     $('#stusel').addEventListener('change', e => location.hash = `#/g/${kid}/${e.target.value}`);
   };
@@ -1437,6 +1450,7 @@ function vGrade(kid, no) {
         <div class="sec-h">세특<span class="sp"></span><span class="bytes" id="bytes">${s.seteuk ? `<b class="${bcls}">${b}B</b>` : ''} / ${rng[0]}~${rng[1]}B</span>
           ${s.seteuk ? `<button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="복사">${ic('copy')}</button>` : ''}</div>
         <textarea class="in memo" id="tmemo" rows="1" placeholder="관찰 메모 (선택) — 세특에 반영">${esc(s.memo)}</textarea>
+        ${s.seteuk && s.seteukStale ? `<div class="note stale">채점 판단을 바꿨어요. 이 세특은 바꾸기 전 판단으로 쓴 것이에요. <button class="btn sm primary" data-act="mkseteuk">${ICON.wand}바뀐 판단으로 다시 쓰기</button></div>` : ''}
         <textarea class="in" id="tset" rows="5" placeholder="'세특 만들기'를 누르면 채점 결과로 초안을 씁니다">${esc(s.seteuk)}</textarea>
         <ul class="warns" id="warns">${warns.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
         <button class="btn soft" data-act="mkseteuk" style="margin-top:8px">${ICON.wand}${s.seteuk ? '다시 만들기' : '세특 만들기'}</button>
@@ -1487,16 +1501,28 @@ function pickModal(o) {
 function hasGuide(task) { return !!Object.keys(task.keys || {}).length; }
 const normForm = f => String(f || '').replace(/\s|형|\(|\)/g, '').toUpperCase();
 function formOf(cls) { return normForm(cls && cls.form); }
-function keyOf(task, cls) { return cls && cls.formChecked ? (task.keys || {})[formOf(cls)] || null : null; }
+function keyOf(task, cls) { return ensureMap(task, cls && cls.formChecked ? (task.keys || {})[formOf(cls)] || null : null); }
+// 정답표의 큰 문항 번호(3-1, 3-2 → 3)를 나온 순서대로
+function topNos(key) { const seen = []; ((key && key.answers) || []).forEach(a => { const t = String(a.no || '').split(/[-(.\s]/)[0]; if (t && !seen.includes(t)) seen.push(t); }); return seen; }
+// 채점 기준 수와 시험지 문항 수가 같으면 순서대로 1번 기준 ↔ 1번 문항 …(내용으로 짐작하지 않음)
+function orderMap(task, key) {
+  const tops = topNos(key);
+  if (!task.criteria.length || tops.length !== task.criteria.length) return false;
+  key.crit = task.criteria.map((c, i) => Object.assign({ guide: '' }, (key.crit || [])[i] || {}, { qnos: tops[i] }));
+  key.map = 'order'; return true;
+}
+function ensureMap(task, k) { if (k && !k.map) { if (!orderMap(task, k)) k.map = 'ai'; save(); } return k; }
 // 학생마다 시험지 형(AI 가 답을 읽을 때 함께 읽거나 선생님이 고름). 없으면 반의 형
 function stuForm(cls, no) { const s = cls.students[no]; return s && s.form != null ? s.form : formOf(cls); }
-function keyFor(task, cls, no) { const f = stuForm(cls, no); return (task.keys || {})[f] || keyOf(task, cls); }
+function keyFor(task, cls, no) { const f = stuForm(cls, no); return ensureMap(task, (task.keys || {})[f]) || keyOf(task, cls); }
 function keyFromAI(task, r, from, sample) {
-  return {
+  const k = {
     answers: (r.answers || []).map(a => ({ no: String(a.no || '').replace(/번/g, '').trim(), q: a.question || '', answer: a.answer || '' })),
     crit: task.criteria.map((c, i) => { const x = (r.criteria || []).find(y => Number(y.index) === i + 1) || {}; return { qnos: String(x.questions || '').replace(/번/g, '').trim(), guide: x.guide || '' }; }),
     checked: false, at: Date.now(), from, sample,
   };
+  if (!orderMap(task, k)) k.map = 'ai';
+  return k;
 }
 // 다른 형 학생을 처음 만나면 그 학생 답안지로 그 형 정답표를 한 번만 만든다(같은 형이 여럿이어도 한 번)
 const KEYMAKING = {};
@@ -1584,7 +1610,8 @@ function keyModal(task, cls, then, form) {
         <div class="row ${byForm ? 'hide' : ''}" style="gap:6px"><span class="small muted">시험지 형</span><input class="in" id="kform" value="${esc(formOf(cls))}" style="width:64px" placeholder="예: C"><span class="small faint">${others.length ? `같은 형: ${esc(others.join(', '))}` : '형이 같은 반은 이 정답표를 함께 써요'}</span></div>
         <div class="sec-h" style="margin:12px 0 6px">문항별 정답 <span class="faint small" style="font-weight:400">AI 가 시험지를 풀어 만든 것 — 틀린 곳을 고쳐 주세요</span></div>
         <div class="ktb" id="ktb">${key.answers.map(ansRow).join('')}</div><button class="btn sm ghost" id="kadd">+ 문항</button>
-        <div class="sec-h" style="margin:14px 0 6px">채점 기준 ↔ 문항</div>
+        <div class="sec-h" style="margin:14px 0 6px">채점 기준 ↔ 문항 <span class="sp"></span><button class="lnk" id="kord" type="button">문항 순서대로 1:1</button></div>
+        <p class="small ${key.map === 'order' ? 'faint' : 'muted'}" style="margin:0 0 6px">${key.map === 'order' ? `기준 ${task.criteria.length}개 = 문항 ${topNos(key).length}개라 순서대로 맞췄어요. 판단은 각 문항의 정답으로 하고, 기준 문장은 참고예요.` : key.map === 'teacher' ? '선생님이 정한 대응이에요.' : `기준 ${task.criteria.length}개, 문항 ${topNos(key).length}개라 AI 가 내용으로 짐작했어요. 맞는지 확인해 주세요.`}</p>
         <div class="maptb">${task.criteria.map((c, i) => `<div class="mr"><span class="mi">${i + 1}</span><span class="mt">${esc(c.text)}</span>
           <label class="mq"><input class="in" data-mi="${i}" value="${esc((key.crit[i] || {}).qnos || '')}" placeholder="예: 3">번</label></div>`).join('')}</div>
       </div>
@@ -1595,7 +1622,7 @@ function keyModal(task, cls, then, form) {
   const collect = () => {
     const rows = $$('#ktb .kr').map(r => ({ no: $('.kno', r).value.replace(/번/g, '').trim(), answer: $('.kans', r).value.trim() })).filter(a => a.no || a.answer);
     key.answers = rows.map(a => Object.assign({ q: '' }, (key.answers.find(x => x.no === a.no) || {}), a));
-    $$('#mbox [data-mi]').forEach(inp => { const i = Number(inp.dataset.mi); key.crit[i] = key.crit[i] || { qnos: '', guide: '' }; key.crit[i].qnos = inp.value.replace(/번/g, '').trim(); });
+    $$('#mbox [data-mi]').forEach(inp => { const i = Number(inp.dataset.mi); key.crit[i] = key.crit[i] || { qnos: '', guide: '' }; const v = inp.value.replace(/번/g, '').trim(); if (v !== key.crit[i].qnos) key.map = 'teacher'; key.crit[i].qnos = v; });
     const nf = normForm($('#kform').value);
     if (!byForm && nf !== formOf(cls)) {
       const of = formOf(cls); task.keys = task.keys || {};
@@ -1604,6 +1631,11 @@ function keyModal(task, cls, then, form) {
       if (!task.classes.some(k => k.formChecked && formOf(k) === of)) delete task.keys[of];
     }
     save();
+  };
+  $('#kord').onclick = () => {
+    collect(); const tops = topNos(key);
+    if (tops.length !== task.criteria.length) { toast(`문항 ${tops.length}개, 기준 ${task.criteria.length}개라 순서대로 맞출 수 없어요. 번호를 직접 적어 주세요.`, 4000); return; }
+    $$('#mbox [data-mi]').forEach(inp => { inp.value = tops[Number(inp.dataset.mi)]; }); collect(); key.map = 'order'; save(); toast('순서대로 맞췄어요.');
   };
   $('#kadd').onclick = () => { $('#ktb').insertAdjacentHTML('beforeend', ansRow({ no: '', answer: '' }, $$('#ktb .kr').length)); };
   $('#ktb').onclick = e => { const d = e.target.closest('[data-kdel]'); if (d) d.closest('.kr').remove(); };
@@ -1622,6 +1654,10 @@ function found(q, all) {
 async function runAIGrade(task, cls, no, signal) {
   const sub = subOf(cls, no); if (!sub) throw new Error('답안이 없습니다.');
   const s = stu(cls, no);
+  if (cls._reuse && cls._reuse.has(no) && s.ai && s.ai.answers && s.ai.answers.length) {
+    cls._reuse.delete(no);
+    await judgeInto(task, cls, no, s.ai.answers, signal, { blank: s.ai.blank, unreadable: s.ai.unreadable }); return;
+  }
   const hint = keyFor(task, cls, no) || { answers: [] };
   const imgs = await aiImages(cls, sub);
   const rd = await AI.read(imgs, hint.answers.map(a => a.no), signal);
@@ -1657,7 +1693,7 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
 async function runSeteuk(task, cls, no, signal) {
   const s = stu(cls, no);
   const set = App.settings(); let rng = [set.byteMin, set.byteMax];
-  const info = seteukInfo(task, s);
+  const info = seteukInfo(task, s, cls, no);
   if (levelOf(task, s) === '하') rng = [Math.min(120, rng[0]), rng[1], 'low'];
   const styles = Style.pick(task, 3);
   let best = null, prev = null, unsupported = [];
@@ -1676,7 +1712,7 @@ async function runSeteuk(task, cls, no, signal) {
     if (!dist) break;
     prev = { text, bytes: b };
   }
-  s.seteuk = best.text; s.seteukAI = best.text; save();
+  s.seteuk = best.text; s.seteukAI = best.text; s.seteukStale = false; save();
   return best;
 }
 
@@ -2251,13 +2287,16 @@ const ACT = {
     pickModal({
       title: 'AI 채점 다시', note: "고른 학생만 다시 채점해요. '채점 완료'한 학생은 점수 그대로, AI 판단만 새로.",
       nos, sel, tag, quick: [['확인 필요', no => statusOf(cls, no) !== '채점 완료'], ['채점 완료', no => statusOf(cls, no) === '채점 완료']],
-      extra: `<div class="row" style="margin-top:12px"><span class="small muted">채점 기준</span>${strictSeg(task)}<span class="sp"></span><button class="lnk" data-act="keyview" data-id="${cls.id}">정답표 보기</button></div>`,
+      extra: `<div class="row" style="margin-top:12px"><span class="small muted">채점 기준</span>${strictSeg(task)}<span class="sp"></span><button class="lnk" data-act="keyview" data-id="${cls.id}">정답표 보기</button></div>
+        <label class="opt" style="margin-top:10px"><input type="checkbox" id="rgread"><span>답안도 다시 읽기 <small class="faint">— 끄면 이미 읽은 답으로 판단만 다시 해요(빠르고 한도 절반). 쪽을 돌렸거나 잘못 읽었을 때 켜세요.</small></span></label>`,
       go: `${ic('bot')}다시 채점`,
       run: items => {
+        cls._reuse = reread ? null : new Set(items);
         items.forEach(no => { const s = stu(cls, no); if (!s.done) Object.assign(s, { touched: false, override: null, special: null, checks: [], pts: [], creason: null }); });
         save(); ACT.batchgrade({ dataset: { id: cls.id } }, null, items);
       },
     });
+    let reread = false; const rg = $('#rgread'); if (rg) rg.onchange = () => { reread = rg.checked; };
   },
   // 세특 다시 쓰기: 학생을 골라서(직접 고친 세특은 처음에 빼 둠)
   reseteuk(el) {
@@ -2349,7 +2388,7 @@ const ACT = {
   chk(el) {
     const { task, cls, no } = gctx; const s = stu(cls, no); const n = task.criteria.length;
     if (!s.touched) { s.checks = Array(n).fill(false); s.pts = Array(n).fill(0); }
-    s.checks[Number(el.dataset.i)] = el.checked; s.touched = true; s.override = null; s.special = null; save(); rerender();
+    s.checks[Number(el.dataset.i)] = el.checked; s.touched = true; s.override = null; s.special = null; if (s.seteuk) s.seteukStale = true; save(); rerender();
   },
   setscore(el) { const s = stu(gctx.cls, gctx.no); s.override = Number(el.dataset.v); s.special = null; save(); rerender(); },
   special(el) { const s = stu(gctx.cls, gctx.no); const v = Number(el.dataset.v); s.special = s.special === v ? null : v; save(); rerender(); },

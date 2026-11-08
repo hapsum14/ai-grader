@@ -611,3 +611,7 @@ details.aid[open]>summary{margin-bottom:10px}
 .sform{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:10px}
 .sform .in{width:80px;padding:4px 8px}
 .sform .note{flex-basis:100%}
+
+/* 선생님 최종 판단 · 옛 판단 세특 */
+.mark.t{background:var(--accent);color:var(--accent-ink)}
+.note.stale{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0}
