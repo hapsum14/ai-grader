@@ -422,7 +422,7 @@ function seteukInfo(task, s, cls, no) {
   if (s.ai && s.ai.observation) L.push(changed
     ? '채점 때 쓴 세특 초안(AI 판단 기준). 이 글의 맥락·흐름·구체적 내용은 살리되, 교사가 틀림으로 바꾼 문항의 내용은 빼고 교사가 맞음으로 바꾼 문항의 내용은 학생 답에서 더해 고쳐 쓴다:\n' + s.ai.observation
     : '채점 때 쓴 세특 초안. 이 글의 맥락·흐름·구체적 내용과 역량 서술(드러냄·돋보임 등)을 그대로 살려, 분량과 세특 규칙에 맞게만 다듬는다(새 내용을 지어내지 않음):\n' + s.ai.observation);
-  if (s.memo) L.push('교사 관찰 메모(중요): ' + s.memo);
+  if (s.memo) L.unshift(`★ 교사 관찰 메모(가장 중요 — 반드시 세특에 반영): ${s.memo}\n메모에 적힌 역량·관찰·강조점은 성취 수준과 관계없이 세특에 꼭 넣는다. 역량 말(예: 이해력, 사고력)은 그 역량을 보여 주는 학생 답 내용에 붙여 '~을 설명하며 이해력을 보임', '~을 근거로 판단하는 사고력을 드러냄'처럼 쓴다.`);
   return L.join('\n');
 }
 // 문체 본보기: 선생님이 예전에 쓴 세특 엑셀에서 활동 부분('○○ 수행평가에서는 …' 1~2문장)만 뽑아 이 브라우저에 둔다
@@ -1565,7 +1565,10 @@ function vGrade(kid, no) {
     const fb = $('#tfb'); if (fb) fb.addEventListener('input', () => { s.feedback = fb.value; save(); });
     $$('.ansin').forEach(t => t.addEventListener('input', () => { const x = s.ai.answers[Number(t.dataset.ai)]; if (x) { x.text = t.value; s.ai.transcript = s.ai.answers.map(a => `${a.no}. ${a.text}`).join('\n'); save(); } }));
     $$('.whyin').forEach(t => t.addEventListener('input', () => { s.creason = s.creason || {}; s.creason[t.dataset.wi] = t.value; save(); }));
-    const memo = $('#tmemo'); if (memo) memo.addEventListener('input', () => { s.memo = memo.value; save(); });
+    const memo = $('#tmemo'); if (memo) {
+      memo.addEventListener('input', () => { s.memo = memo.value; if (s.seteuk) s.seteukStale = true; save(); });
+      memo.addEventListener('change', () => { if (s.seteuk && s.seteukStale && !$('.note.stale')) rerender(); });
+    }
     const se = $('#tset'); if (se) se.addEventListener('input', () => { s.seteuk = se.value; save(); updBytes(se.value); });
     const ad = $('#aidet'); if (ad) ad.addEventListener('toggle', () => { G.aiOpen = ad.open; });
     $$('[data-act="pt"]').forEach(el => el.addEventListener('change', () => {
@@ -1627,8 +1630,8 @@ function vGrade(kid, no) {
       <div class="gsec">
         <div class="sec-h">세특<span class="sp"></span><span class="bytes" id="bytes">${s.seteuk ? `<b class="${bcls}">${b}B</b>` : ''} / ${rng[0]}~${rng[1]}B</span>
           ${s.seteuk ? `<button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="복사">${ic('copy')}</button>` : ''}</div>
-        <textarea class="in memo" id="tmemo" rows="1" placeholder="관찰 메모 (선택) — 세특에 반영">${esc(s.memo)}</textarea>
-        ${s.seteuk && s.seteukStale ? `<div class="note stale">채점 판단을 바꿨어요. 이 세특은 바꾸기 전 판단으로 쓴 것이에요. <button class="btn sm primary" data-act="mkseteuk">${ICON.wand}바뀐 판단으로 다시 쓰기</button></div>` : ''}
+        <textarea class="in memo" id="tmemo" rows="1" placeholder="관찰 메모 — 강조할 역량·관찰을 적으면 세특에 반드시 넣어요 (예: 이해력, 사고력)">${esc(s.memo)}</textarea>
+        ${s.seteuk && s.seteukStale ? `<div class="note stale">판단이나 관찰 메모가 바뀌었어요. <button class="btn sm primary" data-act="mkseteuk">${ICON.wand}${s.memo ? '메모를 반영해' : '바뀐 판단으로'} 다시 쓰기</button></div>` : ''}
         <textarea class="in" id="tset" rows="5" placeholder="'세특 만들기'를 누르면 채점 결과로 초안을 씁니다">${esc(s.seteuk)}</textarea>
         ${s.seteuk && s.seteuk === s.seteukAI && s.seteukFrom && s.seteukFrom !== 'none' ? '<div class="small faint" style="margin-top:4px">채점하면서 함께 쓴 세특이에요. 고치면 다시 채점해도 선생님 글을 그대로 둬요.</div>' : ''}
         ${!s.seteuk && noSeteukBasis(task, s) ? `<div class="small" style="margin-top:4px;color:var(--ai)">${esc(noSeteukBasis(task, s))} 필요하면 관찰 메모를 적고 '세특 만들기'를 누르세요.</div>` : ''}
@@ -2038,7 +2041,8 @@ async function runSeteuk(task, cls, no, signal) {
     const dist = b > rng[1] ? b - rng[1] : b < rng[0] ? rng[0] - b : 0;
     // 문장마다 댄 근거 구절이 학생 답안에 실제로 있는지
     const quotes = (r.quotes || []).filter(Boolean);
-    const bad = all ? quotes.filter(q => !/교사|메모/.test(q) && !found(q, all)) : (text ? [text] : []);
+    const src = (all + ' ' + (s.memo || '')).trim(); // 학생 답 + 교사 메모가 근거
+    const bad = src ? quotes.filter(q => !/교사|메모/.test(q) && !found(q, src)) : (text ? [text] : []);
     if (text && !quotes.length && all) bad.push('(근거 구절 없음)');
     const score = dist + bad.length * 1000;
     if (!best || score < best.score) best = { text, b, dist, bad, score };
