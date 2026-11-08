@@ -462,15 +462,20 @@ const AI = (() => {
     blank: B('답안 거의 전부가 비어 있으면 true'),
     unreadable: B('글씨가 흐리거나 잘려 읽기 어려운 곳이 많으면 true'),
   });
-  async function read(images, nos, signal) {
+  async function read(images, nos, signal, o = {}) {
+    nos = (nos || []).map(x => typeof x === 'object' ? x : { no: String(x) });
+    const names = nos.map(x => String(x.no));
     const schema = nos && nos.length ? O({
-      answers: A(O({ no: { type: 'STRING', enum: [...new Set(nos.map(String))], description: '정답표의 문항 이름 중 하나를 그대로(한 문항에 칸이 여럿이면 같은 이름으로 여러 개)' }, text: READ_SCHEMA.properties.answers.items.properties.text })),
+      answers: A(O({ no: { type: 'STRING', enum: [...new Set(names)], description: '정답표의 문항 이름 중 하나를 그대로(한 문항에 칸이 여럿이면 같은 이름으로 여러 개)' }, text: READ_SCHEMA.properties.answers.items.properties.text })),
       form: READ_SCHEMA.properties.form, blank: READ_SCHEMA.properties.blank, unreadable: READ_SCHEMA.properties.unreadable,
     }) : READ_SCHEMA;
-    if (isMock()) { await sleep(300, signal); return { answers: (nos.length ? nos : ['1', '2', '3']).map(no => ({ no, text: `(모의) ${no}번 학생 답` })), blank: false, unreadable: false }; }
+    if (isMock()) { await sleep(300, signal); return { answers: (names.length ? names : ['1', '2', '3']).map(no => ({ no, text: `(모의) ${no}번 학생 답` })), blank: false, unreadable: false }; }
     const parts = [];
     images.forEach((b64, i) => { parts.push({ text: `학생 답안 ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
-    parts.push({ text: (nos.length ? `문항 이름: ${nos.join(', ')}\n각 답의 no 에는 이 목록의 이름을 그대로 쓴다(시험지에 적힌 칸 이름이 조금 달라도 가장 맞는 문항 이름으로). 한 문항에 칸이 여럿이면 같은 이름으로 나눠 적는다.\n` : '') + '문항마다 학생이 쓴 답을 그대로 옮겨 적어 주세요. 채점하지 마세요. 인쇄된 문제 글은 옮기지 않습니다. 시험지에 인쇄된 형 표시(A형 등)가 있으면 form 에 적어 주세요.' });
+    const list = nos.map(x => `- ${x.no}${x.q ? ` : ${x.q}` : ''}`).join('\n');
+    parts.push({ text: (nos.length ? `문항 목록(이름 : 무엇을 묻는 칸인지):\n${list}\n각 답의 no 에는 위 목록의 이름을 그대로 쓴다. 칸 제목이 비슷해도(예: '분석 활동 1차시'와 '분석활동1') 그 칸이 묻는 내용을 보고 맞는 문항을 고른다. 한 문항에 칸이 여럿이면(첫째·둘째, 출처 칸 등) 같은 이름으로 나눠 적는다.\n` : '')
+      + (o.only ? `이번에는 다음 문항의 답만 찾아 옮긴다(앞서 빠졌던 문항): ${o.only.join(', ')}. 모든 쪽을 끝까지 살펴 그 문항의 칸을 찾는다.\n` : '')
+      + '모든 쪽, 표의 모든 칸을 빠짐없이 옮긴다. 출처·쪽수 칸(예: (116)쪽~(117)쪽)도 그 답 끝에 함께 적는다. 채점하지 않는다. 인쇄된 문제 글은 옮기지 않는다. 시험지에 인쇄된 형 표시(A형 등)가 있으면 form 에 적는다.' });
     const P = plan().read;
     return call({ system: '너는 손글씨 답안을 정확히 옮겨 적는 조수다. 검은 상자로 가린 곳은 개인정보이니 읽지 않는다. 학생이 지우고 다시 쓴 곳은 최종 답만 쓴다. 애매한 글자는 추측하지 말고 □ 로 둔다. 그림·모형·그래프 답은 "(그림 생략)"으로 넘기지 말고, 무엇을 몇 개, 어떻게 그렸는지 말로 적는다. 학생이 표 옆이나 빈칸에 적은 조건(시료·시약 번호, 모둠, 측정값 등)도 그 문항 답 앞에 [조건: …]으로 함께 적는다.', parts, schema, temperature: 0, signal, think: P.think, _model: P.model });
   }

@@ -1618,7 +1618,7 @@ async function classifyKey(task, key, cls) {
   const subs = cls.subs.filter(x => !(cls.students[x.no] || {}).status);
   if (subs.length < 2) return;
   const idx = [...new Set([0, Math.floor(subs.length / 3), Math.floor(subs.length * 2 / 3), subs.length - 1])];
-  const nos = (key.answers || []).map(a => a.no);
+  const nos = (key.answers || []).map(a => ({ no: a.no, q: a.q || "" }));
   const samples = (await Promise.all(idx.map(async i => {
     const x = subs[i], s = cls.students[x.no];
     if (s && s.ai && s.ai.answers && s.ai.answers.length) return s.ai.answers; // 이미 읽은 학생은 다시 읽지 않음
@@ -1763,8 +1763,18 @@ async function runAIGrade(task, cls, no, signal) {
   }
   const hint = keyFor(task, cls, no) || { answers: [] };
   const imgs = await aiImages(cls, sub);
-  const rd = await AI.read(imgs, hint.answers.map(a => a.no), signal);
-  const answers = (rd.answers || []).map(a => ({ no: String(a.no || '').replace(/번/g, '').trim(), text: String(a.text || '') }));
+  const qs = hint.answers.map(a => ({ no: a.no, q: a.q || '' }));
+  const rd = await AI.read(imgs, qs, signal);
+  let answers = (rd.answers || []).map(a => ({ no: String(a.no || '').replace(/번/g, '').trim(), text: String(a.text || '') }));
+  // 정답표 문항 가운데 답이 하나도 안 붙은 것이 있으면 그 문항만 다시 찾는다(긴 활동지에서 칸을 건너뛰는 일 막기)
+  const has = q => answers.some(a => AI.sameQ(a.no, q) && a.text.trim() && !/^\(답 없음\)$/.test(a.text.trim()));
+  const miss = qs.filter(x => !has(x.no)).map(x => x.no);
+  if (miss.length && !rd.blank && answers.length) {
+    try {
+      const r2 = await AI.read(imgs, qs, signal, { only: miss });
+      (r2.answers || []).forEach(a => { const no = String(a.no || '').trim(), t = String(a.text || ''); if (miss.includes(no) && t.trim() && !/^\(답 없음\)$/.test(t.trim())) answers.push({ no, text: t }); });
+    } catch (e) { if (e.name === 'AbortError') throw e; }
+  }
   if (s.formBy !== 'teacher') {
     const rf = normForm(rd.form), base = keyOf(task, cls);
     s.form = rf && !(formOf(cls) === '' && base && !(task.keys || {})[rf] && !qMismatch(base, answers)) ? rf : formOf(cls);
@@ -2649,6 +2659,17 @@ function startRename(tid) {
   inp.onkeydown = e => { if (e.key === 'Enter') end(true); else if (e.key === 'Escape') end(false); };
   inp.onblur = () => end(true);
 }
+// 채점 화면의 답안 그림: 크게 보면 손 모양으로 잡아 끌어 옮긴다(표시 넣기 중에는 끄지 않음)
+let VPAN = null;
+const vpScroll = vp => vp.scrollWidth > vp.clientWidth + 1 || vp.scrollHeight > vp.clientHeight + 1;
+document.addEventListener('mouseover', e => { const vp = e.target.closest && e.target.closest('#vpage'); if (vp) vp.classList.toggle('pannable', vpScroll(vp) && !G.addMark); });
+document.addEventListener('mousedown', e => {
+  const vp = e.target.closest && e.target.closest('#vpage');
+  if (!vp || e.button || G.addMark || e.target.closest('button,input,textarea,select,a,[data-act],.tr') || !vpScroll(vp)) return;
+  VPAN = { vp, x: e.clientX, y: e.clientY, l: vp.scrollLeft, t: vp.scrollTop }; vp.classList.add('drag'); e.preventDefault();
+});
+document.addEventListener('mousemove', e => { if (!VPAN) return; VPAN.vp.scrollLeft = VPAN.l - (e.clientX - VPAN.x); VPAN.vp.scrollTop = VPAN.t - (e.clientY - VPAN.y); });
+document.addEventListener('mouseup', () => { if (VPAN) { VPAN.vp.classList.remove('drag'); VPAN = null; } });
 document.addEventListener('dblclick', e => { const t = e.target.closest('[data-ren]'); if (t) startRename(t.dataset.ren); });
 document.addEventListener('change', e => {
   if (e.target.matches && e.target.matches('[data-sform]') && typeof gctx !== 'undefined' && gctx) {

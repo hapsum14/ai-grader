@@ -686,3 +686,8 @@ details.aid[open]>summary{margin-bottom:10px}
 .kbox .mapimg img{display:block;margin:0 auto;max-width:none;width:100%}
 .kbox .mapimg.zoomed{cursor:grab}
 .kbox .mapimg.drag{cursor:grabbing;user-select:none}
+
+/* 채점 화면 답안 그림 끌어 옮기기 */
+.vpage.pannable{cursor:grab}
+.vpage.drag{cursor:grabbing;user-select:none}
+.vpage.drag img{pointer-events:none}
