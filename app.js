@@ -1673,7 +1673,8 @@ function keyModal(task, cls, then, form) {
   const kf = byForm ? form : formOf(cls);
   modal(`<h2>정답표 확인 <span class="pill">${kf ? esc(kf) + '형' : '형 표시 없음'}</span></h2>
     <div class="mapwrap">
-      <div class="mapsheet">${pages.length ? `<div class="row" style="gap:4px;margin-bottom:6px">${pages.map((_, j) => `<button class="chip ${j ? '' : 'on'}" data-pg="${j}">${j + 1}쪽</button>`).join('')}<span class="small muted" style="margin-left:6px">${esc(sm.k.name)} ${sm.sub.no}번 답안지</span></div>
+      <div class="mapsheet">${pages.length ? `<div class="row" style="gap:4px;margin-bottom:6px">${pages.map((_, j) => `<button class="chip ${j ? '' : 'on'}" data-pg="${j}">${j + 1}쪽</button>`).join('')}<span class="small muted" style="margin-left:6px">${esc(sm.k.name)} ${sm.sub.no}번 답안지</span>
+        <span class="sp"></span><span class="kzoom"><button class="ibtn" id="kzo" title="작게">−</button><button class="btn sm ghost" id="kzf" title="폭에 맞추기">100%</button><button class="ibtn" id="kzi" title="크게">+</button></span></div>
         <div class="mapimg"><img id="mapimg" alt=""></div>` : '<p class="muted small">답안지가 없어요.</p>'}</div>
       <div class="mapright">
         <div class="row ${byForm ? 'hide' : ''}" style="gap:6px"><span class="small muted">시험지 형</span><input class="in" id="kform" value="${esc(formOf(cls))}" style="width:64px" placeholder="예: C"><span class="small faint">${others.length ? `같은 형: ${esc(others.join(', '))}` : '형이 같은 반은 이 정답표를 함께 써요'}</span></div>
@@ -1694,6 +1695,25 @@ function keyModal(task, cls, then, form) {
   $('#mbox').addEventListener('input', e => { if (e.target.matches('.kans')) grow(e.target); });
   const show = async j => { $$('#mbox [data-pg]').forEach(b => b.classList.toggle('on', Number(b.dataset.pg) === j)); const im = $('#mapimg'); if (im) im.src = await imgURL(pages[j].id); };
   if (pages.length) { $$('#mbox [data-pg]').forEach(b => b.onclick = () => show(Number(b.dataset.pg))); show(0); }
+  // 시험지 크게 보기: + / − / 폭 맞춤, Ctrl+휠, 두 번 누르면 그 자리를 크게, 끌어서 옮기기
+  const box = $('#mbox .mapimg'), im = $('#mapimg');
+  if (box && im) {
+    let z = 1;
+    const setZ = (nz, cx, cy) => {
+      nz = Math.max(1, Math.min(4, Math.round(nz * 100) / 100));
+      const r = box.getBoundingClientRect(); const px = cx == null ? r.width / 2 : cx - r.left, py = cy == null ? r.height / 2 : cy - r.top;
+      const fx = (box.scrollLeft + px) / (box.scrollWidth || 1), fy = (box.scrollTop + py) / (box.scrollHeight || 1);
+      z = nz; im.style.width = (z * 100) + '%'; box.classList.toggle('zoomed', z > 1); $('#kzf').textContent = Math.round(z * 100) + '%';
+      box.scrollLeft = fx * box.scrollWidth - px; box.scrollTop = fy * box.scrollHeight - py;
+    };
+    $('#kzi').onclick = () => setZ(z + 0.5); $('#kzo').onclick = () => setZ(z - 0.5); $('#kzf').onclick = () => setZ(1);
+    box.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); setZ(z * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY); }, { passive: false });
+    im.addEventListener('dblclick', e => setZ(z > 1 ? 1 : 2.2, e.clientX, e.clientY));
+    let drag = null;
+    box.addEventListener('mousedown', e => { if (z <= 1 || e.button) return; drag = { x: e.clientX, y: e.clientY, l: box.scrollLeft, t: box.scrollTop }; box.classList.add('drag'); e.preventDefault(); });
+    window.addEventListener('mousemove', e => { if (!drag) return; box.scrollLeft = drag.l - (e.clientX - drag.x); box.scrollTop = drag.t - (e.clientY - drag.y); });
+    window.addEventListener('mouseup', () => { drag = null; box.classList.remove('drag'); });
+  }
   const collect = () => {
     const rows = $$('#ktb .kr').map(r => ({ no: $('.kno', r).value.replace(/번/g, '').trim(), answer: $('.kans', r).value.trim(), type: $('.kty', r) ? $('.kty', r).value : 'fixed', rule: $('.krule', r) ? $('.krule', r).value.trim() : '' })).filter(a => a.no || a.answer);
     key.answers = rows.map(a => Object.assign({ q: '' }, (key.answers.find(x => x.no === a.no) || {}), a));

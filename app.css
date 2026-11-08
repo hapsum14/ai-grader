@@ -676,3 +676,13 @@ details.aid[open]>summary{margin-bottom:10px}
 .kbox .kr{min-width:0;box-sizing:border-box}
 @media (max-width:820px){ .kbox .kr .kno{flex:1 1 auto;width:0} }
 .kbox .kr{align-items:stretch}
+
+/* 정답표 창 시험지 크게 보기 */
+.kbox .mapsheet>.row{flex-wrap:nowrap}
+.kbox .kzoom{display:flex;align-items:center;gap:2px}
+.kbox .kzoom .ibtn{font-size:18px;font-weight:700;width:30px;height:30px}
+.kbox .kzoom .btn{min-width:58px}
+.kbox .mapimg{display:block!important;overflow:auto;cursor:zoom-in}
+.kbox .mapimg img{display:block;margin:0 auto;max-width:none;width:100%}
+.kbox .mapimg.zoomed{cursor:grab}
+.kbox .mapimg.drag{cursor:grabbing;user-select:none}
