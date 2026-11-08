@@ -922,7 +922,8 @@ function vCourse(cid) {
   const names = [...new Set(c.tasks.flatMap(t => t.classes.map(k => k.name)))];
   const meta = courseMeta(c);
   return `
-  <div class="phead"><div class="pt"><h1>${esc(c.name)}</h1><div class="sub">${esc(meta)}</div></div>
+  <div class="phead"><div class="pt"><h1>${esc(c.name)}</h1><div class="sub">${esc(meta)}
+      <span class="cbyte" title="이 과목 세특의 바이트 범위(나이스 기준). 비우면 설정값을 써요">· 세특 길이 <input class="in" type="number" data-cbyte="min" data-id="${c.id}" value="${c.byteMin || ''}" placeholder="${App.settings().byteMin}">~<input class="in" type="number" data-cbyte="max" data-id="${c.id}" value="${c.byteMax || ''}" placeholder="${App.settings().byteMax}">B</span></div></div>
     <details class="menu"><summary class="btn" title="더 보기">${ic('more')}</summary><div class="mlist">
       ${c.tasks.filter(canMerge).length > 1 || c.tasks.some(t => partsOf(t) && !t.classes.length) ? '<div class="mcap">수행평가</div>' : ''}
       ${c.tasks.filter(canMerge).length > 1 ? `<button data-act="mergeask" data-id="${c.id}">${ic('copy')}수행평가 합치기…</button>` : ''}
@@ -1291,7 +1292,7 @@ function vClass(kid) {
   const avg = scores.length ? (sum(scores) / scores.length).toFixed(1) : '';
   const nos = listNos(task, cls);
   G.navIds = nos.slice(); G.navKid = kid;
-  const max = App.settings().byteMax;
+  const max = rangeFor(task)[1];
   const rows = nos.map(no => {
     const s = cls.students[no]; const st = statusOf(cls, no); const sub = subOf(cls, no);
     const sc = scoreOf(task, s), aisc = aiScoreOf(task, s);
@@ -1363,7 +1364,7 @@ function peekHTML(task, cls, no) {
   return `<div class="pk-h"><b>${no}번</b>${pillOf(st)}${s.form != null && s.form !== formOf(cls) ? `<span class="pill ai">${esc(s.form || '형 없음')}형</span>` : ''}<span class="sp"></span>
       <span class="pk-sc">${sc == null ? '-' : sc}<small>/${task.maxScore}</small>${ai != null && ai !== sc ? `<small class="faint"> AI ${ai}</small>` : ''}</span></div>
     ${crit ? `<div class="pk-sec">채점 기준</div><ul class="pk-crit">${crit}</ul>` : `<p class="small muted">${subOf(cls, no) ? '아직 채점하지 않았어요.' : '답안이 없어요.'}</p>`}
-    <div class="pk-sec">세특 ${s.seteuk ? `<span class="bt ${b > set.byteMax ? 'bad' : ''}">${b}B</span>` : ''}${s.seteukStale ? ' <span class="pill ai">판단이 바뀜 · 다시 쓰기</span>' : ''}<span class="sp"></span>${s.seteuk ? `<button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="세특 복사">${ic('copy')}</button>` : ''}</div>
+    <div class="pk-sec">세특 ${s.seteuk ? `<span class="bt ${b > rangeFor(task)[1] ? 'bad' : ''}">${b}B</span>` : ''}${s.seteukStale ? ' <span class="pill ai">판단이 바뀜 · 다시 쓰기</span>' : ''}<span class="sp"></span>${s.seteuk ? `<button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="세특 복사">${ic('copy')}</button>` : ''}</div>
     <div class="pk-set">${s.seteuk ? esc(s.seteuk) : `<span class="faint">${esc(none || '아직 세특이 없어요.')}</span>`}</div>
     ${s.feedback ? `<div class="pk-sec">학생 피드백</div><div class="pk-fb">${esc(s.feedback)}</div>` : ''}
     <a class="btn primary wide" href="#/g/${cls.id}/${no}" style="margin-top:14px">${ic('play')}${no}번 채점 화면 열기</a>`;
@@ -1484,7 +1485,7 @@ function vGrade(kid, no) {
   const done = Array.from({ length: cls.size }, (_, i) => i + 1).filter(i => { const x = statusOf(cls, i); return x === '채점 완료' || x === '미응시' || x === '미제출'; }).length;
   const opts = Array.from({ length: cls.size }, (_, i) => i + 1).map(i => `<option value="${i}" ${i === no ? 'selected' : ''}>${i}번 (${statusOf(cls, i)})</option>`).join('');
   const sc = scoreOf(task, s), aisc = aiScoreOf(task, s);
-  const rng = [App.settings().byteMin, App.settings().byteMax];
+  const rng = rangeFor(task);
 
   // 왼쪽: 제출물
   let left;
@@ -1642,7 +1643,7 @@ function vGrade(kid, no) {
   </div>`;
 }
 function updBytes(t) {
-  const rng = [App.settings().byteMin, App.settings().byteMax];
+  const rng = rangeFor(gctx && gctx.task);
   const b = App.bytes(t);
   const cls = !t ? '' : b > rng[1] ? 'over' : b < rng[0] ? 'under' : 'ok';
   const el = $('#bytes'); if (el) el.innerHTML = `${t ? `<b class="${cls}">${b}B</b>` : ''} / ${rng[0]}~${rng[1]}B`;
@@ -1971,6 +1972,7 @@ async function autoSeteuk(task, cls, no, signal) {
 async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   const key = keyFor(task, cls, no) || { answers: [], crit: [] };
   const P = AI.plan();
+  task._range = rangeFor(task);
   const [j1, j2] = await Promise.all([AI.judge(task, key, answers, signal, P.judge), P.judge2 ? AI.judge(task, key, answers, signal, Object.assign({ noDraft: true }, P.judge2)).catch(() => null) : null]);
   const all = answers.map(a => a.text).join(' ');
   const crit = (j1.criteria || []).map(c => {
@@ -1988,7 +1990,7 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
   if (s.seteuk && before !== task.criteria.map((c, i) => finalMet(task, s, i)).join()) s.seteukStale = true;
   if ((!s.seteuk || (s.seteuk === s.seteukAI && s.seteukFrom === 'draft')) && !noSeteukBasis(task, s)) {
-    const set = App.settings(); let rng = [set.byteMin, set.byteMax]; if (levelOf(task, s) === '하') rng = [Math.min(120, rng[0]), rng[1]];
+    let rng = rangeFor(task); if (levelOf(task, s) === '하') rng = [Math.min(Math.round(rng[1] * 0.4), rng[0]), rng[1]];
     const ok = draftOK(task, s, rng);
     if (ok) { s.seteuk = ok.text; s.seteukAI = ok.text; s.seteukFrom = 'draft'; s.seteukStale = false; }
   }
@@ -2009,6 +2011,11 @@ function noSeteukBasis(task, s) {
   return '';
 }
 // 선생님이 AI 판단을 바꾼 기준이 있는지
+// 세특 길이: 과목에 정해 두었으면 그것, 아니면 설정값
+function rangeFor(task) {
+  const d = App.settings(); const c = task && task.id ? (findTask(task.id) || {}).course : null;
+  return [Number(c && c.byteMin) || d.byteMin, Number(c && c.byteMax) || d.byteMax];
+}
 function teacherChanged(task, s) { return !!(s.ai && s.touched && task.criteria.some((c, i) => { const a = s.ai.criteria.find(x => x.index === i + 1); return a && !!a.met !== finalMet(task, s, i); })); }
 // 채점 때 함께 쓴 세특 초안을 그대로 쓸 수 있는지(판단이 그대로이고, 분량·금지어·근거가 맞을 때)
 function draftOK(task, s, rng) {
@@ -2026,8 +2033,8 @@ async function runSeteuk(task, cls, no, signal) {
   const s = stu(cls, no);
   const why = noSeteukBasis(task, s);
   if (why && !s.memo) { s.seteuk = ''; s.seteukAI = ''; s.seteukFrom = 'none'; s.seteukStale = false; save(); return { text: '', b: 0, dist: 0, none: why }; }
-  const set = App.settings(); let rng = [set.byteMin, set.byteMax];
-  if (levelOf(task, s) === '하') rng = [Math.min(120, rng[0]), rng[1], 'low'];
+  let rng = rangeFor(task);
+  if (levelOf(task, s) === '하') rng = [Math.min(Math.round(rng[1] * 0.4), rng[0]), rng[1], 'low'];
   const ok = draftOK(task, s, rng);
   if (ok) { s.seteuk = ok.text; s.seteukAI = ok.text; s.seteukStale = false; s.seteukFrom = 'draft'; save(); return { text: ok.text, b: ok.b, dist: 0, draft: true }; }
   const info = seteukInfo(task, s, cls, no);
@@ -2880,6 +2887,14 @@ document.addEventListener('mousemove', e => { if (!VPAN) return; VPAN.vp.scrollL
 document.addEventListener('mouseup', () => { if (VPAN) { VPAN.vp.classList.remove('drag'); VPAN = null; } });
 document.addEventListener('dblclick', e => { const t = e.target.closest('[data-ren]'); if (t) startRename(t.dataset.ren); });
 document.addEventListener('change', e => {
+  if (e.target.matches && e.target.matches('[data-cbyte]')) {
+    const c = findCourse(e.target.dataset.id); if (!c) return;
+    const v = Math.max(0, Number(e.target.value) || 0);
+    if (e.target.dataset.cbyte === 'min') c.byteMin = v || null; else c.byteMax = v || null;
+    save(); const r = rangeFor(c.tasks[0] || null);
+    toast(c.byteMin || c.byteMax ? `${c.name} 세특은 ${c.byteMin || App.settings().byteMin}~${c.byteMax || App.settings().byteMax}바이트로 써요.` : `${c.name}은 설정값 길이를 써요.`, 3000);
+    return;
+  }
   if (e.target.matches && e.target.matches('[data-sform]') && typeof gctx !== 'undefined' && gctx) {
     const { task, cls, no } = gctx; const s = stu(cls, no); const f = normForm(e.target.value);
     if (f === stuForm(cls, no) && s.formBy === 'teacher') return;
