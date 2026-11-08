@@ -463,12 +463,16 @@ const AI = (() => {
     unreadable: B('글씨가 흐리거나 잘려 읽기 어려운 곳이 많으면 true'),
   });
   async function read(images, nos, signal) {
+    const schema = nos && nos.length ? O({
+      answers: A(O({ no: { type: 'STRING', enum: [...new Set(nos.map(String))], description: '정답표의 문항 이름 중 하나를 그대로(한 문항에 칸이 여럿이면 같은 이름으로 여러 개)' }, text: READ_SCHEMA.properties.answers.items.properties.text })),
+      form: READ_SCHEMA.properties.form, blank: READ_SCHEMA.properties.blank, unreadable: READ_SCHEMA.properties.unreadable,
+    }) : READ_SCHEMA;
     if (isMock()) { await sleep(300, signal); return { answers: (nos.length ? nos : ['1', '2', '3']).map(no => ({ no, text: `(모의) ${no}번 학생 답` })), blank: false, unreadable: false }; }
     const parts = [];
     images.forEach((b64, i) => { parts.push({ text: `학생 답안 ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
-    parts.push({ text: (nos.length ? `참고 — 같은 반 정답표의 문항 번호: ${nos.join(', ')} (이 시험지의 번호가 다르면 이 시험지 번호를 따른다)\n` : '') + '문항마다 학생이 쓴 답을 그대로 옮겨 적어 주세요. 채점하지 마세요. 인쇄된 문제 글은 옮기지 않습니다. 시험지에 인쇄된 형 표시(A형 등)가 있으면 form 에 적어 주세요.' });
+    parts.push({ text: (nos.length ? `문항 이름: ${nos.join(', ')}\n각 답의 no 에는 이 목록의 이름을 그대로 쓴다(시험지에 적힌 칸 이름이 조금 달라도 가장 맞는 문항 이름으로). 한 문항에 칸이 여럿이면 같은 이름으로 나눠 적는다.\n` : '') + '문항마다 학생이 쓴 답을 그대로 옮겨 적어 주세요. 채점하지 마세요. 인쇄된 문제 글은 옮기지 않습니다. 시험지에 인쇄된 형 표시(A형 등)가 있으면 form 에 적어 주세요.' });
     const P = plan().read;
-    return call({ system: '너는 손글씨 답안을 정확히 옮겨 적는 조수다. 검은 상자로 가린 곳은 개인정보이니 읽지 않는다. 학생이 지우고 다시 쓴 곳은 최종 답만 쓴다. 애매한 글자는 추측하지 말고 □ 로 둔다. 그림·모형·그래프 답은 "(그림 생략)"으로 넘기지 말고, 무엇을 몇 개, 어떻게 그렸는지 말로 적는다. 학생이 표 옆이나 빈칸에 적은 조건(시료·시약 번호, 모둠, 측정값 등)도 그 문항 답 앞에 [조건: …]으로 함께 적는다.', parts, schema: READ_SCHEMA, temperature: 0, signal, think: P.think, _model: P.model });
+    return call({ system: '너는 손글씨 답안을 정확히 옮겨 적는 조수다. 검은 상자로 가린 곳은 개인정보이니 읽지 않는다. 학생이 지우고 다시 쓴 곳은 최종 답만 쓴다. 애매한 글자는 추측하지 말고 □ 로 둔다. 그림·모형·그래프 답은 "(그림 생략)"으로 넘기지 말고, 무엇을 몇 개, 어떻게 그렸는지 말로 적는다. 학생이 표 옆이나 빈칸에 적은 조건(시료·시약 번호, 모둠, 측정값 등)도 그 문항 답 앞에 [조건: …]으로 함께 적는다.', parts, schema, temperature: 0, signal, think: P.think, _model: P.model });
   }
 
   // 3) 판단: 글만 보고 기준마다(대응 문항의 학생 답 + 정답)
@@ -484,10 +488,32 @@ const AI = (() => {
     observation: S('세특 초안: 아래 세특 규칙대로, 충족으로 판단한 기준의 학생 답 내용만으로 쓴 문단(지정 바이트 범위)'),
     obsQuotes: A(S('세특 초안의 문장마다 근거가 된 학생 답 구절(학생 답에서 그대로)')),
   });
+  const nrm = t => String(t || '').normalize('NFKC').replace(/번/g, '').replace(/[\s.,·:;()\[\]{}'"~_]/g, '').toLowerCase();
+  // 정답표 문항 이름(want)과 학생 답의 문항 이름(no)이 같은 문항인지
+  function sameQ(no, want) {
+    const a = nrm(no), w = nrm(want); if (!a || !w) return false;
+    if (a === w) return true;
+    if (/^[\d-]+$/.test(w)) return a.startsWith(w + '-') || (a.startsWith(w) && !/\d/.test(a[w.length] || '')); // 숫자 번호: 3 ↔ 3-1, 3(가) (10 은 아님)
+    if (a.startsWith(w) && !(/\d$/.test(w) && /\d/.test(a[w.length] || ''))) return true; // 분석활동1 ↔ 분석활동1첫째 (분석활동10 은 아님)
+    // '1차시-요약' → 1차시 와 요약 이 모두 들어 있으면 같은 문항. 숫자만인 조각(활동 1-1 의 뒤 1)은 앞 조각 바로 뒤에 같은 숫자로 있어야 함
+    const ps = w.split('-').filter(Boolean); if (!ps.length) return false;
+    let pos = 0;
+    for (const p of ps) {
+      if (/^\d+$/.test(p)) {
+        const m = a.slice(pos).match(/^\D*?(\d+)/); if (!m || m[1] !== p) return false;
+        pos += m.index + m[0].length;
+      } else {
+        let at = a.indexOf(p); while (at >= 0 && /\d$/.test(p) && /\d/.test(a[at + p.length] || '')) at = a.indexOf(p, at + 1); if (at < 0) return false;
+        if (at >= pos) pos = at + p.length;
+      }
+    }
+    return true;
+  }
+  const qList = q => String(q || '').split(/\s*,\s*/).map(x => x.replace(/번/g, '').trim()).filter(Boolean);
   const pick = (answers, q) => {
-    const want = String(q || '').split(/[,\s]+/).map(x => x.replace(/번/g, '').trim()).filter(Boolean);
+    const want = qList(q);
     if (!want.length) return answers;
-    return answers.filter(a => want.some(w => a.no === w || a.no.startsWith(w + '-') || a.no.startsWith(w + '(') || a.no.startsWith(w + '.')));
+    return answers.filter(a => want.some(w => sameQ(a.no, w)));
   };
   async function judge(task, key, answers, signal, o = {}) {
     const lv = STRICT[task.strict] ? task.strict : '보통';
@@ -506,13 +532,13 @@ const AI = (() => {
         return `[기준 ${i + 1} = 문항 ${qs}]${task.mode === 'points' ? ` (${c.points}점)` : ''}
 - 문제: ${ka.map(a => `${a.no}. ${a.q || ''}`).join(' / ') || '(정답표에 없음)'}
 - 정답: ${ka.map(a => `${a.no}. ${a.answer}`).join(' / ') || '(정답표 없음)'}${gd ? `\n- 판단 지침: ${gd}` : ''}
-- 학생 답: ${st.map(a => `${a.no}. ${a.text}`).join(' / ') || '(답 없음)'}${typeNote(ka)}
+- 학생 답: ${st.map(a => `${a.no}. ${a.text}`).join(' / ') || (answers.length ? '(이 문항 이름으로 붙은 답을 못 찾음 — 아래 학생 답 전체에서 이 문항에 해당하는 답을 찾아 판단. 정말 없을 때만 답 없음)' : '(답 없음)')}${typeNote(ka)}
 - 참고(채점 기준표 ${i + 1}번 문장 — 문항 내용과 다르면 무시): ${c.text}`;
       }
       return `[기준 ${i + 1}] ${c.text}${task.mode === 'points' ? ` (${c.points}점)` : ''}
 - 판단할 문항: ${qs || '(정해지지 않음: 기준 내용과 맞는 문항을 학생 답 전체에서 찾을 것)'}
 - 그 문항의 정답: ${ka.map(a => `${a.no}. ${a.answer}`).join(' / ') || '(정답표 없음)'}${typeNote(ka)}
-- 학생 답: ${st.map(a => `${a.no}. ${a.text}`).join(' / ') || '(답 없음)'}${k.guide ? `\n- 판단 지침: ${k.guide}` : ''}`;
+- 학생 답: ${st.map(a => `${a.no}. ${a.text}`).join(' / ') || (answers.length ? '(이 문항 이름으로 붙은 답을 못 찾음 — 아래 학생 답 전체에서 이 문항에 해당하는 답을 찾아 판단. 정말 없을 때만 답 없음)' : '(답 없음)')}${k.guide ? `\n- 판단 지침: ${k.guide}` : ''}`;
     }).join('\n\n');
     const parts = [{ text: taskBrief(task, false) }];
     if (task.question) parts.push({ text: '선생님의 채점 방향·정답 메모(무엇보다 먼저 따른다. 정답표·기준 문장보다 이 메모가 우선):\n' + task.question });
@@ -633,5 +659,5 @@ ${SETEUK_SYS}` });
     return { text: t, level: '분석', quotes: ['(모의) 1번 학생 답'] };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, detectForm, classify, onUsage: f => useL.push(f) };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, detectForm, classify, sameQ, onUsage: f => useL.push(f) };
 })();

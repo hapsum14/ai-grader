@@ -285,7 +285,7 @@ function seteukInfo(task, s, cls, no) {
   L.push(`받은 점수: ${sc == null ? '미정' : sc}/${task.maxScore}`);
   const key = cls ? keyFor(task, cls, no) : null;
   const ans = (s.ai && s.ai.answers) || [];
-  const pickA = q => { const want = String(q || '').split(/[,\s]+/).filter(Boolean); return want.length ? ans.filter(a => want.some(w => a.no === w || a.no.startsWith(w + '-') || a.no.startsWith(w + '(') || a.no.startsWith(w + '.'))) : []; };
+  const pickA = q => { const want = String(q || '').split(/\s*,\s*/).map(x => x.trim()).filter(Boolean); return want.length ? ans.filter(a => want.some(w => AI.sameQ(a.no, w))) : []; };
   let changed = 0, met = 0;
   const rows = task.criteria.map((c, i) => {
     const a = s.ai && s.ai.criteria.find(x => x.index === i + 1);
@@ -308,6 +308,7 @@ function seteukInfo(task, s, cls, no) {
   const aiFb = s.ai && s.feedback === s.ai.feedback;
   if (s.feedback && !(changed && aiFb)) L.push((aiFb ? 'AI 피드백(참고): ' : '교사 피드백: ') + s.feedback);
   if (changed) L.push('교사가 AI 판단을 바꾼 기준이 있다. 교사가 충족으로 바꾼 기준은 그 기준을 충족한 것으로 보고 긍정적으로 쓰며, AI 가 찾은 부족한 점은 쓰지 않는다.');
+  if (changed && s.ai && s.ai.observation) L.push('채점 때 쓴 세특 초안(AI 판단 기준). 이 글의 맥락·흐름·구체적 내용은 살리되, 교사가 틀림으로 바꾼 문항의 내용은 빼고 교사가 맞음으로 바꾼 문항의 내용은 학생 답에서 더해 고쳐 쓴다:\n' + s.ai.observation);
   if (s.memo) L.push('교사 관찰 메모(중요): ' + s.memo);
   return L.join('\n');
 }
@@ -1761,6 +1762,11 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
     blank: !!extra.blank, unreadable: !!extra.unreadable, at: Date.now(), model: AI.isMock() ? '모의' : P.judge.model, strict: task.strict || '보통', form: stuForm(cls, no) };
   if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
   if (s.seteuk && before !== task.criteria.map((c, i) => finalMet(task, s, i)).join()) s.seteukStale = true;
+  if (!s.seteuk || (s.seteuk === s.seteukAI && s.seteukFrom === 'draft')) {
+    const set = App.settings(); let rng = [set.byteMin, set.byteMax]; if (levelOf(task, s) === '하') rng = [Math.min(120, rng[0]), rng[1]];
+    const ok = draftOK(task, s, rng);
+    if (ok) { s.seteuk = ok.text; s.seteukAI = ok.text; s.seteukFrom = 'draft'; s.seteukStale = false; }
+  }
   if (!s.feedback && j1.feedback) s.feedback = j1.feedback;
   save();
 }
@@ -2529,6 +2535,9 @@ const ACT = {
     const { task, cls, no } = gctx; const s = stu(cls, no);
     if (scoreOf(task, s) == null && !s.status) { toast('점수를 정하거나 미제출·미응시를 고르세요.'); return; }
     s.done = true; save();
+    if (s.seteuk && s.seteukStale && App.settings().apiKey) { // 선생님 판단대로 세특을 뒤에서 다시
+      const n0 = no; runSeteuk(task, cls, n0).then(r => { toast(`${n0}번 세특을 선생님 판단대로 다시 썼어요(${r.b}B).`, 3000); softRefresh(cls.id, n0); }).catch(e => toast(`${n0}번 세특 다시 쓰기 실패: ${e.message}`, 4000));
+    }
     // 보던 목록 순서에서 다음으로 채점할 학생(채점 전·AI 채점)으로
     const todo = x => { const st = statusOf(cls, x); return st === '채점 전' || st === 'AI 채점'; };
     let next = null, x = no;
