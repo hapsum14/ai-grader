@@ -176,6 +176,14 @@ async function aiImages(cls, sub) {
   }
   return out;
 }
+// 성취 수준: 충족한 채점 기준 비율로 상(80% 이상) · 중(50% 이상) · 하
+function levelOf(task, s) {
+  if (s.special != null) return '하';
+  const n = task.criteria.length; if (!n) return '중';
+  let met = 0;
+  task.criteria.forEach((c, i) => { if (s.touched ? !!s.checks[i] : !!(s.ai && (s.ai.criteria.find(x => x.index === i + 1) || {}).met)) met++; });
+  const r = met / n; return r >= 0.8 ? '상' : r >= 0.5 ? '중' : '하';
+}
 function seteukInfo(task, s) {
   const L = [];
   const sc = scoreOf(task, s);
@@ -185,8 +193,7 @@ function seteukInfo(task, s) {
     const ok = s.touched ? !!s.checks[i] : !!(s.ai && (s.ai.criteria.find(x => x.index === i + 1) || {}).met);
     (ok ? met : unmet).push(c.text);
   });
-  const ratio = task.criteria.length ? met.length / task.criteria.length : 0;
-  L.push(`성취 수준: ${s.special != null ? '하(특수 상황)' : ratio >= 0.8 ? '상' : ratio >= 0.5 ? '중' : '하'} (채점 기준 ${task.criteria.length}개 중 ${met.length}개 충족)`);
+  L.push(`성취 수준: ${levelOf(task, s)}${s.special != null ? '(특수 상황)' : ''} (채점 기준 ${task.criteria.length}개 중 ${met.length}개 충족)`);
   L.push('충족한 채점 기준: ' + (met.join(' / ') || '없음'));
   L.push('충족하지 못한 채점 기준(세특에 쓰지 않음, 참고만): ' + (unmet.join(' / ') || '없음'));
   if (s.ai) {
@@ -1029,8 +1036,9 @@ async function runAIGrade(task, cls, no, signal) {
 }
 async function runSeteuk(task, cls, no, signal) {
   const s = stu(cls, no);
-  const set = App.settings(); const rng = [set.byteMin, set.byteMax];
+  const set = App.settings(); let rng = [set.byteMin, set.byteMax];
   const info = seteukInfo(task, s);
+  if (levelOf(task, s) === '하') rng = [Math.min(120, rng[0]), rng[1], 'low'];
   const styles = Style.pick(task);
   let best = null, prev = null;
   for (let k = 0; k < 3; k++) {
