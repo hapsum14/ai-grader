@@ -1658,7 +1658,9 @@ function found(q, all) {
 async function runAIGrade(task, cls, no, signal) {
   const sub = subOf(cls, no); if (!sub) throw new Error('답안이 없습니다.');
   const s = stu(cls, no);
-  if (cls._reuse && cls._reuse.has(no) && s.ai && s.ai.answers && s.ai.answers.length) {
+  // 그림 답을 '(그림 생략)'으로만 옮긴 학생은 다시 읽는다(그림을 말로 옮기도록 바뀜)
+  const pic = s.ai && (s.ai.answers || []).some(x => /^\(그림(\s*생략)?\)\s*$/.test(String(x.text || '').trim()));
+  if (cls._reuse && cls._reuse.has(no) && s.ai && s.ai.answers && s.ai.answers.length && !pic) {
     cls._reuse.delete(no);
     await judgeInto(task, cls, no, s.ai.answers, signal, { blank: s.ai.blank, unreadable: s.ai.unreadable }); return;
   }
