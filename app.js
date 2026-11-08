@@ -1668,7 +1668,10 @@ async function runAIGrade(task, cls, no, signal) {
   const imgs = await aiImages(cls, sub);
   const rd = await AI.read(imgs, hint.answers.map(a => a.no), signal);
   const answers = (rd.answers || []).map(a => ({ no: String(a.no || '').replace(/번/g, '').trim(), text: String(a.text || '') }));
-  if (s.formBy !== 'teacher') { const rf = normForm(rd.form); s.form = rf || formOf(cls); }
+  if (s.formBy !== 'teacher') {
+    const rf = normForm(rd.form), base = keyOf(task, cls);
+    s.form = rf && !(formOf(cls) === '' && base && !(task.keys || {})[rf] && !qMismatch(base, answers)) ? rf : formOf(cls);
+  }
   const f = stuForm(cls, no);
   if (!(task.keys || {})[f]) await keyForForm(task, cls, no, f);
   const key = keyFor(task, cls, no);
@@ -1689,9 +1692,11 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
     return { index: idx, met: !!c.met, points: Number(c.points) || 0, evidence: ev, reason: c.reason || '', unsure: why.join(' · ') };
   });
   const s = stu(cls, no);
+  const before = task.criteria.map((c, i) => finalMet(task, s, i)).join(); // 이전 최종 판단(손대지 않았으면 이전 AI 판단)
   s.ai = { transcript: answers.map(a => `${a.no}. ${a.text}`).join('\n'), answers, criteria: crit, feedback: j1.feedback || '', observation: j1.observation || '',
     blank: !!extra.blank, unreadable: !!extra.unreadable, at: Date.now(), model: AI.isMock() ? '모의' : P.judge.model, strict: task.strict || '보통', form: stuForm(cls, no) };
   if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
+  if (s.seteuk && before !== task.criteria.map((c, i) => finalMet(task, s, i)).join()) s.seteukStale = true;
   if (!s.feedback && j1.feedback) s.feedback = j1.feedback;
   save();
 }
@@ -1804,7 +1809,7 @@ function bgJob(o) {
   })();
   return j.promise;
 }
-const needOrient = cls => !cls.oriented && cls.pages.some(p => !p.oc && !p.skip) && !!(App.settings().apiKey || '').trim();
+const needOrient = cls => !cls.oriented && !(cls.masks || []).length && cls.pages.some(p => !p.oc && !p.skip) && !!(App.settings().apiKey || '').trim();
 function orientJob(cls) {
   return bgJob({ key: 'orient:' + cls.id, title: `${cls.name} · 쪽 방향`, where: `#/k/${cls.id}/pages`, phase: '쪽 방향 확인 중…', run: async j => {
     const n = await autoOrient(cls, m => { j.phase = m; renderJobs(); });
