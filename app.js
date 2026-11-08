@@ -514,7 +514,8 @@ async function startPlan(src) {
       planName: src.file ? src.file.name : '붙여넣은 글', planText: full, createdAt: Date.now(),
       tasks: (r.tasks || []).map(t => {
         const d = Parse.planDetails(full, t.name, t.standards);
-        return newTask(Object.assign({}, t, { standards: d.standards, levels: d.levels }));
+        const criteria = (t.criteria || []).map(c => Object.assign({}, c, { text: String(c.text || '').replace(/^\s*\d+\s*[.)]\s*/, '') }));
+        return newTask(Object.assign({}, t, { criteria, standards: d.standards, levels: d.levels }));
       }),
     };
     if (!c.tasks.length) throw new Error('수행평가 영역을 찾지 못했습니다. 계획서 내용을 확인해 주세요.');
@@ -545,8 +546,15 @@ function partsOf(t) {
 }
 function splitTask(course, t) {
   const ps = partsOf(t); if (!ps || t.classes.length) return 0;
+  // 이름: 형태(활동형·논술형)가 겹치면 차시나 순서를 붙인다
+  const label = p => {
+    const dup = ps.filter(x => x.kind && x.kind === p.kind).length > 1;
+    const cha = (p.name.match(/(\d+)\s*차시/) || [])[1];
+    const short = p.name.length > 18 ? p.name.slice(0, 18) + '…' : p.name;
+    return p.kind ? (dup ? `${p.kind} ${cha ? cha + '차시' : p.no}` : p.kind) : short;
+  };
   const made = ps.map(p => newTask(Object.assign({}, JSON.parse(JSON.stringify(t)), {
-    name: `${t.name}(${p.kind || p.name})`, maxScore: p.max || t.maxScore,
+    name: `${t.name}(${label(p)})`, maxScore: p.max || t.maxScore,
     criteria: p.crit.map(c => Object.assign({}, c, { part: 1 })), scale: p.scale.map(x => Object.assign({}, x, { part: 1 })),
     parts: [], splitFrom: t.name, keys: {},
   })));
@@ -557,7 +565,7 @@ function splitAsk(course, list, done) {
   modal(`<h2>평가 요소가 나뉜 수행평가가 있어요</h2>
     <p class="small muted" style="margin:0 0 10px">평가 요소마다 시험지가 따로라면 나눠서 만드는 게 정확해요(정답표·채점이 시험지별로). 나눌 것을 고르세요.</p>
     ${list.map(t => { const ps = partsOf(t); return `<label class="opt"><input type="checkbox" data-split="${t.id}" checked><span><b>${esc(t.name)}</b> · ${t.maxScore}점<br>
-      ${ps.map(p => `<small>→ ${esc(t.name)}(${esc(p.kind || p.name)}) · 기준 ${p.crit.length}개 · 최고 ${p.max}점</small>`).join('<br>')}</span></label>`; }).join('')}
+      ${ps.map(p => `<small>→ ${esc(p.kind || '')}${p.kind ? ' · ' : ''}${esc(p.name.length > 30 ? p.name.slice(0, 30) + '…' : p.name)} · 기준 ${p.crit.length}개 · 최고 ${p.max}점</small>`).join('<br>')}</span></label>`; }).join('')}
     <div class="foot"><button class="btn" id="spno">하나로 두기</button><button class="btn primary" id="spgo">${ic('check')}고른 것 나누기</button></div>`);
   $('#modal').dataset.lock = '1';
   const end = () => { delete $('#modal').dataset.lock; closeModal(true); save(true); done && done(); };
