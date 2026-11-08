@@ -307,7 +307,7 @@ const AI = (() => {
 - 일부만 있거나, 이유가 모호하거나, 용어가 부정확하면 미충족.
 - 애매하면 미충족으로 본다.`,
   };
-  async function grade(task, images, signal) {
+  async function grade(task, images, signal, o = {}) {
     const lv = STRICT[task.strict] ? task.strict : '보통';
     if (isMock()) { await sleep(600, signal); return mockGrade(task, lv); }
     const parts = [{ text: taskBrief(task, true) }];
@@ -315,7 +315,7 @@ const AI = (() => {
     if (task.question) parts.push({ text: '선생님 메모:\n' + task.question });
     images.forEach((b64, i) => { parts.push({ text: `학생 답안 ${i + 1}쪽:` }); parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }); });
     parts.push({ text: STRICT[lv] + `\n\n채점 기준 ${task.criteria.length}개 항목을 모두 위 엄격도로 판단해 JSON 으로 답해 주세요.` });
-    return call({ system: GRADE_SYS + '\n- 충족을 가르는 선은 사용자가 준 "채점 엄격도"를 따른다.', parts, schema: GRADE_SCHEMA, temperature: 0.1, signal, think: 'low' });
+    return call({ system: GRADE_SYS + '\n- 충족을 가르는 선은 사용자가 준 "채점 엄격도"를 따른다.', parts, schema: GRADE_SCHEMA, temperature: 0.1, signal, think: 'think' in o ? o.think : 'low', _model: o.model });
   }
 
   // ---------- 4. 세특(수행평가 한 개 몫) ----------
@@ -351,7 +351,7 @@ const AI = (() => {
 
 '문체 본보기'가 주어지면 문장 길이·이음말 쓰임을 본뜨되 위 규칙이 먼저다. 본보기의 내용·용어·수치는 이 학생 자료에 없으면 가져오지 않는다.`;
 
-  async function seteuk(task, info, range, prev, signal, styles) {
+  async function seteuk(task, info, range, prev, signal, styles, o = {}) {
     if (isMock()) { await sleep(500, signal); return mockSeteuk(task, info, range); }
     const parts = [{ text: taskBrief(task, false) }];
     if (styles && styles.length) parts.push({ text: '문체 본보기(선생님이 예전에 쓴 세특의 활동 부분. 문장 구조·길이·이음말·서술어만 본뜨고 내용은 가져오지 말 것):\n' + styles.map((t, i) => `${i + 1}) ${t}`).join('\n') });
@@ -360,7 +360,7 @@ const AI = (() => {
     parts.push({ text: '이 학생의 자료:\n' + info });
     parts.push({ text: `분량: ${range[0]}~${range[1]}바이트(한글 약 ${Math.round(range[0] / 3)}~${Math.round(range[1] / 3)}자).${range[2] ? ' 성취 수준 하: 자료에 있는 만큼만, 짧아도 됨.' : ''}` });
     if (prev) parts.push({ text: `직전 초안은 ${prev.bytes}바이트라서 범위를 벗어났습니다. ${prev.bytes > range[1] ? '내용을 압축해' : '그 학생 답의 구체적 내용을 더해'} ${range[0]}~${range[1]}바이트로 다시 써 주세요.\n직전 초안: ${prev.text}` });
-    return call({ system: SETEUK_SYS, parts, schema: SETEUK_SCHEMA, temperature: 0.6, signal, think: 'low' });
+    return call({ system: SETEUK_SYS, parts, schema: SETEUK_SCHEMA, temperature: 0.6, signal, think: 'think' in o ? o.think : 'low', _model: o.model });
   }
 
   function taskBrief(task, withGuide) {
