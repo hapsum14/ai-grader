@@ -1447,12 +1447,10 @@ function vGrade(kid, no) {
           ${s.formWarn ? `<div class="note" style="margin-top:6px">${esc(s.formWarn)}</div>` : ''}</div>
         ${s.ai ? `<div class="sec-h" style="margin-bottom:6px">${ic('bot')}AI 판단<span class="faint small" style="font-weight:400">${s.ai.strict ? esc(s.ai.strict) + ' · ' : ''}${new Date(s.ai.at).toLocaleDateString()}</span><span class="sp"></span>
             <button class="btn sm" data-act="aigrade" title="${s.done ? '채점 완료한 학생은 점수 그대로, AI 판단만 새로' : '새 AI 판단으로 체크를 바꿔요'}">${ICON.bot}다시 채점</button></div>
-          <details class="aid" id="aidet" ${G.aiOpen ? 'open' : ''}><summary><span class="small muted">피드백 · 세특 초안 보기</span></summary>
+          <details class="aid" id="aidet" ${G.aiOpen ? 'open' : ''}><summary><span class="small muted">학생 피드백 보기</span></summary>
             ${s.ai.blank ? '<p class="note">백지 또는 답이 거의 없음</p>' : ''}${s.ai.unreadable ? '<p class="note">글씨가 흐리거나 잘림 — 원본 확인</p>' : ''}
             <div class="fb">${esc(s.ai.feedback || '')}</div>
-            <div class="small muted" style="margin:8px 0 4px">세특 초안 <span class="faint">— AI 판단 기준. 판단을 바꾸지 않으면 '세특 만들기'가 이 초안을 그대로 씀</span></div>
-            ${teacherChanged(task, s) ? '<div class="small" style="color:var(--accent);margin-bottom:4px">선생님이 판단을 바꿔서 이 초안은 쓰지 않고, 바뀐 판단으로 새로 써요.</div>' : ''}
-            <div class="fb ${teacherChanged(task, s) ? 'dimtxt' : ''}">${esc(s.ai.observation || '')}</div></details>`
+</details>`
           : `<button class="btn primary wide" data-act="aigrade" ${sub ? '' : 'disabled'}>${ICON.wand}AI 채점</button>`}
       </div>
       <div class="gsec">
@@ -1465,7 +1463,7 @@ function vGrade(kid, no) {
         <textarea class="in memo" id="tmemo" rows="1" placeholder="관찰 메모 (선택) — 세특에 반영">${esc(s.memo)}</textarea>
         ${s.seteuk && s.seteukStale ? `<div class="note stale">채점 판단을 바꿨어요. 이 세특은 바꾸기 전 판단으로 쓴 것이에요. <button class="btn sm primary" data-act="mkseteuk">${ICON.wand}바뀐 판단으로 다시 쓰기</button></div>` : ''}
         <textarea class="in" id="tset" rows="5" placeholder="'세특 만들기'를 누르면 채점 결과로 초안을 씁니다">${esc(s.seteuk)}</textarea>
-        ${s.seteuk && s.seteukFrom === 'draft' && s.seteuk === s.seteukAI ? '<div class="small faint" style="margin-top:4px">채점 때 쓴 세특 초안을 그대로 썼어요(요청 없이 바로).</div>' : ''}
+        ${s.seteuk && s.seteuk === s.seteukAI && s.seteukFrom ? '<div class="small faint" style="margin-top:4px">채점하면서 함께 쓴 세특이에요. 고치면 다시 채점해도 선생님 글을 그대로 둬요.</div>' : ''}
         <ul class="warns" id="warns">${warns.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
         <button class="btn soft" data-act="mkseteuk" style="margin-top:8px">${ICON.wand}${s.seteuk ? '다시 만들기' : '세특 만들기'}</button>
       </div>
@@ -1730,7 +1728,7 @@ async function runAIGrade(task, cls, no, signal) {
   const pic = s.ai && (s.ai.answers || []).some(x => /^\(그림(\s*생략)?\)\s*$/.test(String(x.text || '').trim()));
   if (cls._reuse && cls._reuse.has(no) && s.ai && s.ai.answers && s.ai.answers.length && !pic) {
     cls._reuse.delete(no);
-    await judgeInto(task, cls, no, s.ai.answers, signal, { blank: s.ai.blank, unreadable: s.ai.unreadable }); return;
+    await judgeInto(task, cls, no, s.ai.answers, signal, { blank: s.ai.blank, unreadable: s.ai.unreadable }); await autoSeteuk(task, cls, no, signal); return;
   }
   const hint = keyFor(task, cls, no) || { answers: [] };
   const imgs = await aiImages(cls, sub);
@@ -1745,6 +1743,16 @@ async function runAIGrade(task, cls, no, signal) {
   const key = keyFor(task, cls, no);
   s.formWarn = key && f === formOf(cls) && qMismatch(key, answers) ? '문항 번호가 정답표와 많이 달라요 — 다른 시험지인지 확인해 주세요' : '';
   await judgeInto(task, cls, no, answers, signal, { blank: !!rd.blank, unreadable: !!rd.unreadable });
+  await autoSeteuk(task, cls, no, signal);
+}
+// 세특 칸이 비었거나 AI 가 쓴 그대로면(선생님이 고치지 않았으면) 채점과 함께 세특도 쓴다
+async function autoSeteuk(task, cls, no, signal) {
+  const s = stu(cls, no);
+  if (s.special != null || !s.ai) return;
+  const mine = s.seteuk && s.seteuk !== s.seteukAI; // 선생님이 고친 세특은 건드리지 않음
+  if (mine) return;
+  if (s.seteuk && s.seteukFrom === 'draft' && !s.seteukStale) return; // 초안이 이미 들어감
+  try { await runSeteuk(task, cls, no, signal); } catch (e) { if (e.name === 'AbortError') throw e; }
 }
 async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   const key = keyFor(task, cls, no) || { answers: [], crit: [] };
@@ -2347,7 +2355,7 @@ const ACT = {
     if (needPrep(task, cls) || (keyOf(task, cls) && !keyOf(task, cls).checked && e !== 'again')) { prepGrade(task, cls, () => ACT.batchgrade(el, 'again', items)); return; }
     const lv = task.strict || '보통';
     const done = runBatch(`${cls.name} AI 채점(${lv}) — ${items.length}명`, items,
-      async (no, sig) => { await runAIGrade(task, cls, no, sig); return 'AI ' + aiScoreOf(task, cls.students[no]) + '점'; },
+      async (no, sig) => { await runAIGrade(task, cls, no, sig); const st = cls.students[no]; return 'AI ' + aiScoreOf(task, st) + '점' + (st.seteuk ? ' · 세특 ' + App.bytes(st.seteuk) + 'B' : ''); },
       { key: 'grade:' + cls.id, kind: 'grade', clsId: cls.id, where: '#/k/' + cls.id,
  });
     Promise.resolve(done).then(() => { const n = qSuspect(task, cls); if (n) { save(); softRefresh(cls.id); toast(`${n}개 문항은 학생마다 정답이 다를 수 있어요. 반 화면에서 확인해 주세요.`, 6000); } });
@@ -2375,7 +2383,7 @@ const ACT = {
     $$('.ansin').forEach(t => { const a = s.ai.answers[Number(t.dataset.ai)]; if (a) a.text = t.value; });
     el.disabled = true; el.textContent = '다시 판단하는 중…';
     if (!s.done) Object.assign(s, { touched: false, override: null, special: null, checks: [], pts: [], creason: null });
-    try { await judgeInto(task, cls, no, s.ai.answers, undefined, { blank: s.ai.blank, unreadable: s.ai.unreadable }); if (gctx && gctx.no === no) rerender(); toast('고친 답으로 다시 판단했어요.'); }
+    try { await judgeInto(task, cls, no, s.ai.answers, undefined, { blank: s.ai.blank, unreadable: s.ai.unreadable }); await autoSeteuk(task, cls, no); if (gctx && gctx.no === no) rerender(); toast('고친 답으로 다시 판단했어요.'); }
     catch (e) { toast(e.message, 5000); el.disabled = false; el.textContent = '고친 답으로 다시 판단'; }
   },
   // AI 채점 다시: 학생을 골라서(채점 완료한 학생은 점수 그대로, AI 판단만 새로)
