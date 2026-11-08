@@ -19,6 +19,33 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 const sum = a => a.reduce((x, y) => x + (Number(y) || 0), 0);
+const GCK = 'aigrader-gc';
+function gcLater(clsId) { try { const a = JSON.parse(localStorage.getItem(GCK) || '[]'); if (!a.includes(clsId)) a.push(clsId); localStorage.setItem(GCK, JSON.stringify(a)); } catch (e) {} }
+async function gcImgs() {
+  try {
+    const live = new Set(), liveCls = new Set();
+    S.courses.forEach(c => c.tasks.forEach(t => t.classes.forEach(k => { liveCls.add(k.id); k.pages.forEach(p => live.add(p.id)); })));
+    if (!liveCls.size && !S.courses.length) return; // 자료를 못 읽었을 때는 아무것도 지우지 않음
+    let gone = []; try { gone = JSON.parse(localStorage.getItem(GCK) || '[]'); } catch (e) {}
+    const keys = await DB.keys('img'); let n = 0;
+    for (const key of keys) {
+      const base = String(key).replace(/:t$/, ''), cid = base.split(':')[0];
+      const deadCls = gone.includes(cid) && !liveCls.has(cid);
+      const orphan = liveCls.has(cid) && !live.has(base); // 살아 있는 반의, 더는 안 쓰는 쪽(돌리기·지우기 뒤)
+      if (deadCls || orphan) { await DB.del('img', key); n++; }
+    }
+    gone.filter(cid => !liveCls.has(cid)).forEach(cid => { if (typeof Sync !== 'undefined') Sync.delPrefix(cid + ':'); });
+    localStorage.setItem(GCK, JSON.stringify(gone.filter(cid => liveCls.has(cid))));
+    return n;
+  } catch (e) { return 0; }
+}
+function undoToast(msg) {
+  let t = document.getElementById('utoast');
+  if (!t) { t = document.createElement('div'); t.id = 'utoast'; document.body.appendChild(t); }
+  t.innerHTML = `<span>${esc(msg)}</span><button data-act="undo">되돌리기</button><button class="x" aria-label="닫기">✕</button>`;
+  t.querySelector('.x').onclick = () => t.classList.remove('on');
+  t.classList.add('on'); clearTimeout(undoToast._t); undoToast._t = setTimeout(() => t.classList.remove('on'), 7000);
+}
 function toast(msg, ms = 2400) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('on');
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), ms);
@@ -64,6 +91,23 @@ const DB = {
 };
 
 let S = { courses: [] };
+// 되돌리기: 지우기·옮기기·나누기·합치기 같은 일 전에 자료를 찍어 둔다(그림은 따로 두므로 바로 지우지 않음)
+const UNDO = { stack: [], redo: [] };
+const snapJSON = () => JSON.stringify(S, (k, v) => (k[0] === '_' ? undefined : v));
+function snap(label) { UNDO.stack.push({ label, s: snapJSON() }); if (UNDO.stack.length > 30) UNDO.stack.shift(); UNDO.redo = []; renderUndo(); }
+function undoMove(from, to, verb) {
+  if (typeof BUSY !== 'undefined' && BUSY > 0) { toast('AI 작업이 도는 중이라 지금은 되돌릴 수 없어요. 끝난 뒤 해 주세요.', 3500); return; }
+  const x = from.pop(); if (!x) { toast(verb === '되돌렸' ? '되돌릴 것이 없어요.' : '다시 할 것이 없어요.'); return; }
+  to.push({ label: x.label, s: snapJSON() });
+  S = JSON.parse(x.s); if (G.psel) G.psel.clear(); save(true); rerender(); renderUndo();
+  toast(`${verb}어요: ${x.label}`, 2500);
+}
+function renderUndo() {
+  const u = document.getElementById('undob'), r = document.getElementById('redob'); if (!u) return;
+  const a = UNDO.stack[UNDO.stack.length - 1], b = UNDO.redo[UNDO.redo.length - 1];
+  u.disabled = !a; u.title = a ? `되돌리기: ${a.label} (Ctrl+Z)` : '되돌릴 것이 없어요';
+  r.disabled = !b; r.title = b ? `다시 하기: ${b.label} (Ctrl+Y)` : '다시 할 것이 없어요';
+}
 let saveTimer = null;
 function save(now) {
   clearTimeout(saveTimer);
@@ -174,6 +218,16 @@ function rebuildSubs(cls) {
   groups.forEach(g => { if (g.fixed) return; while (used.has(n) || absent(n)) n++; g.no = n; used.add(n); n++; });
   cls.subs = groups.map(g => ({ id: uid(), no: g.no, fixed: !!g.fixed, pages: g.pages }));
 }
+// 쪽 지우기: 남은 쪽의 '새 학생' 표시와 고정 번호는 그 쪽을 따라간다(그림은 다음에 열 때 정리)
+function removePages(cls, drop) {
+  const startObjs = new Set(cls.starts.map(i => cls.pages[i]));
+  const fixedBy = new Map(cls.subs.filter(x => x.fixed).map(x => [cls.pages[x.pages[0]], x.no]));
+  const keep = cls.pages.filter(p => !drop(p));
+  cls.pages = keep;
+  cls.starts = keep.map((p, i) => startObjs.has(p) ? i : -1).filter(i => i >= 0);
+  cls.subs = [...fixedBy].filter(([p]) => keep.includes(p)).map(([p, no]) => ({ id: uid(), no, fixed: true, pages: [keep.indexOf(p)] }));
+  rebuildSubs(cls);
+}
 function movePages(cls, idxs, target, afterIt) {
   const pick = new Set(idxs);
   if (!pick.size || pick.has(target)) return false;
@@ -215,7 +269,7 @@ async function rotatePages(cls, idxs, deg) {
     if (typeof Sync !== 'undefined') Sync.queueImg(id);
     const old = p.id; if (G.psel && G.psel.has(old)) { G.psel.delete(old); G.psel.add(id); }
     p.id = id; if (deg % 180) [p.w, p.h] = [p.h, p.w];
-    delImgs(old).catch(() => {}); urlCache.delete(old); urlCache.delete(old + ':t');
+    urlCache.delete(old); urlCache.delete(old + ':t'); // 옛 그림은 되돌리기를 위해 두었다가 다음에 열 때 정리(gcImgs)
   }
   save();
 }
@@ -773,7 +827,7 @@ function mergeAsk(course, firstId) {
   $('#mbox').onchange = e => { if (e.target.matches('[data-mg]')) upd(); };
   upd();
   $('#mggo').onclick = () => {
-    const l = sel(); const m = mergeTasks(course, l, $('#mgname').value.trim() || mergeName(l)); save(true);
+    const l = sel(); snap(`수행평가 ${l.length}개 합치기`); const m = mergeTasks(course, l, $('#mgname').value.trim() || mergeName(l)); save(true);
     closeModal(true); rerender(); toast(`'${m.name}'(으)로 합쳤어요. 다시 나누려면 ⋯ → 평가 요소별로 나누기.`, 4000);
   };
 }
@@ -796,6 +850,7 @@ function splitAsk(course, list, done) {
   $('#mbox').onchange = e => { if (e.target.matches('[data-spg]')) preview(); };
   preview();
   $('#spgo').onclick = () => {
+    if ($$('#mbox [data-split]:checked').length) snap('평가 요소별로 나누기');
     let n = 0; $$('#mbox [data-split]:checked').forEach(cb => { const t = course.tasks.find(x => x.id === cb.dataset.split); if (t) n += splitTask(course, t, groupsOf(cb.closest('[data-sp]'))); });
     if (n) toast(`평가 요소별로 ${n}개 수행평가를 만들었어요.`, 3000);
     end();
@@ -996,11 +1051,11 @@ function vPages(kid) {
       <span class="sp"></span><label>쪽 번호 <input class="in num" id="pmto" type="number" min="1" max="${cls.pages.length}" placeholder="몇"></label>
       <button class="btn sm" data-act="pmove" data-w="before">그 쪽 앞으로</button><button class="btn sm" data-act="pmove" data-w="after">그 쪽 뒤로</button>
       <button class="btn sm" data-act="protsel" data-d="270" title="왼쪽으로 90°">↺</button><button class="btn sm" data-act="protsel" data-d="90" title="오른쪽으로 90°">↻ 돌리기</button><button class="btn sm" data-act="protsel" data-d="180">180°</button>
-      <button class="btn sm" data-act="pskip">빼기</button><button class="btn sm ghost" data-act="pclear">고르기 풀기</button></div>`;
+      <button class="btn sm" data-act="pskip" title="채점에서만 빼기(그림은 남음)">빼기</button><button class="btn sm danger" data-act="pdel" title="고른 쪽 그림을 지워요(Ctrl+Z 되돌리기)">${ic('trash')}지우기</button><button class="btn sm ghost" data-act="pclear">고르기 풀기</button></div>`;
   after = () => {
     loadThumbs();
     $$('[data-act="setno"]').forEach(el => el.addEventListener('change', () => {
-      const s = startNo[Number(el.dataset.i)]; s.no = Number(el.value); s.fixed = true; rebuildSubs(cls); save(); rerender();
+      snap(`번호 ${el.value} 정하기`); const s = startNo[Number(el.dataset.i)]; s.no = Number(el.value); s.fixed = true; rebuildSubs(cls); save(); rerender();
     }));
     pageDrag(cls);
   };
@@ -1017,13 +1072,15 @@ function vPages(kid) {
       <div><label class="f">학생당 쪽 수</label><input class="in num" type="number" id="pper" value="${cls.perStudent}"></div>
       <button class="btn" data-act="resplit" data-id="${cls.id}">이대로 다시 나누기</button>
       <button class="btn" data-act="morefiles" data-id="${cls.id}">${ICON.up}파일 더 올리기</button>
+      <button class="btn" data-act="replacefiles" data-id="${cls.id}" title="지금 그림을 모두 빼고 새 파일로 바꿔요">${ICON.up}파일 바꾸기</button>
       <button class="btn soft" data-act="masks" data-id="${cls.id}">${ICON.img}이름 칸 가리기 ${cls.masks.length ? `(${cls.masks.length}곳)` : '(아직 없음)'}</button>
     </div>
     <div class="row orow"><span class="small muted">쪽 방향</span>
       <button class="btn sm" data-act="autoorient" data-id="${cls.id}" title="AI 가 자리마다 2~3쪽을 보고 방향을 맞춰요(작게 줄여 보내 이름은 읽히지 않아요)">${ic('bot')}자동으로 맞추기</button>
       <span class="small faint">전체</span><button class="btn sm" data-act="protall" data-d="270">↺ 왼쪽</button><button class="btn sm" data-act="protall" data-d="90">↻ 오른쪽</button><button class="btn sm" data-act="protall" data-d="180">180°</button>
       <span class="small faint">한 쪽만은 쪽의 ↻, 여러 쪽은 골라서 돌려요</span>
-      <button class="btn sm danger" data-act="delclass" data-id="${cls.id}" style="margin-left:auto">반 지우기</button>
+      <button class="btn sm ghost" data-act="pdelall" data-id="${cls.id}" style="margin-left:auto" title="답안 그림만 모두 지워요(채점 기록은 남음)">${ic('trash')}그림 모두 지우기</button>
+      <button class="btn sm danger" data-act="delclass" data-id="${cls.id}">반 지우기</button>
     </div>
     <label class="f" style="margin-top:14px">미응시 번호 <span class="faint">— 누르면 그 번호를 건너뛰어요</span></label>
     <div class="row" style="gap:6px">${nos.map(n => `<button class="chip ${absent.includes(n) ? 'gray on' : 'gray'}" data-act="togabsent" data-no="${n}">${n}</button>`).join('')}</div>
@@ -1080,7 +1137,9 @@ function pageDrag(cls) {
     const list = drag; drag = null;
     if (!th) return rerender();
     const hint = dropHint(cls, idxOf(th), right);
+    snap(`${list.length}쪽 옮기기`);
     const moved = movePages(cls, list, idxOf(th), right);
+    if (!moved) UNDO.stack.pop(), renderUndo();
     if (moved) { G.plast = null; sel.clear(); save(); rerender(); toast(`${list.length}쪽 옮김 · ${hint.replace('붙이기', '붙였어요').replace('새 학생으로', '새 학생으로 넣었어요')}${Object.values(cls.students).some(x => x.ai) ? ' · 이미 채점한 학생은 다시 채점해 주세요' : ''}`, 3500); }
     else rerender();
   });
@@ -1353,7 +1412,7 @@ function vGrade(kid, no) {
         <span style="opacity:.4">|</span><button data-act="qadd" class="${G.addMark != null ? 'on' : ''}" title="문항 표시 더하기 — 누른 뒤 답안지에서 자리를 누르세요">${ic('plus')}표시</button>
         <button data-act="maskview" class="${G.showMask ? 'on' : ''}" title="AI 로 보내는 모습(이름 가림)">${ic('eye')}</button>
       </div>
-      <div class="vpage" id="vpage"><div style="position:relative;display:inline-block" id="vwrap"><img id="vimg" alt="" style="width:${G.zoom * 100}%;transform:rotate(${G.rot}deg)"></div></div>`;
+      <div class="vpage" id="vpage"><div style="position:relative;display:inline-block" id="vwrap"><img id="vimg" alt="" draggable="false" style="width:${G.zoom * 100}%;transform:rotate(${G.rot}deg)"></div></div>`;
   }
 
   // 오른쪽: 채점
@@ -1463,7 +1522,8 @@ function vGrade(kid, no) {
         <textarea class="in memo" id="tmemo" rows="1" placeholder="관찰 메모 (선택) — 세특에 반영">${esc(s.memo)}</textarea>
         ${s.seteuk && s.seteukStale ? `<div class="note stale">채점 판단을 바꿨어요. 이 세특은 바꾸기 전 판단으로 쓴 것이에요. <button class="btn sm primary" data-act="mkseteuk">${ICON.wand}바뀐 판단으로 다시 쓰기</button></div>` : ''}
         <textarea class="in" id="tset" rows="5" placeholder="'세특 만들기'를 누르면 채점 결과로 초안을 씁니다">${esc(s.seteuk)}</textarea>
-        ${s.seteuk && s.seteuk === s.seteukAI && s.seteukFrom ? '<div class="small faint" style="margin-top:4px">채점하면서 함께 쓴 세특이에요. 고치면 다시 채점해도 선생님 글을 그대로 둬요.</div>' : ''}
+        ${s.seteuk && s.seteuk === s.seteukAI && s.seteukFrom && s.seteukFrom !== 'none' ? '<div class="small faint" style="margin-top:4px">채점하면서 함께 쓴 세특이에요. 고치면 다시 채점해도 선생님 글을 그대로 둬요.</div>' : ''}
+        ${!s.seteuk && noSeteukBasis(task, s) ? `<div class="small" style="margin-top:4px;color:var(--ai)">${esc(noSeteukBasis(task, s))} 필요하면 관찰 메모를 적고 '세특 만들기'를 누르세요.</div>` : ''}
         <ul class="warns" id="warns">${warns.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
         <button class="btn soft" data-act="mkseteuk" style="margin-top:8px">${ICON.wand}${s.seteuk ? '다시 만들기' : '세특 만들기'}</button>
       </div>
@@ -1792,6 +1852,8 @@ async function autoSeteuk(task, cls, no, signal) {
   if (s.special != null || !s.ai) return;
   const mine = s.seteuk && s.seteuk !== s.seteukAI; // 선생님이 고친 세특은 건드리지 않음
   if (mine) return;
+  const why = noSeteukBasis(task, s);
+  if (why) { if (s.seteuk === s.seteukAI) { s.seteuk = ''; s.seteukAI = ''; } s.seteukFrom = 'none'; s.seteukStale = false; save(); return; }
   if (s.seteuk && s.seteukFrom === 'draft' && !s.seteukStale) return; // 초안이 이미 들어감
   try { await runSeteuk(task, cls, no, signal); } catch (e) { if (e.name === 'AbortError') throw e; }
 }
@@ -1814,7 +1876,7 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
     blank: !!extra.blank, unreadable: !!extra.unreadable, at: Date.now(), model: AI.isMock() ? '모의' : P.judge.model, strict: task.strict || '보통', form: stuForm(cls, no) };
   if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
   if (s.seteuk && before !== task.criteria.map((c, i) => finalMet(task, s, i)).join()) s.seteukStale = true;
-  if (!s.seteuk || (s.seteuk === s.seteukAI && s.seteukFrom === 'draft')) {
+  if ((!s.seteuk || (s.seteuk === s.seteukAI && s.seteukFrom === 'draft')) && !noSeteukBasis(task, s)) {
     const set = App.settings(); let rng = [set.byteMin, set.byteMax]; if (levelOf(task, s) === '하') rng = [Math.min(120, rng[0]), rng[1]];
     const ok = draftOK(task, s, rng);
     if (ok) { s.seteuk = ok.text; s.seteukAI = ok.text; s.seteukFrom = 'draft'; s.seteukStale = false; }
@@ -1823,6 +1885,18 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   save();
 }
 
+// 학생이 답안에 실제로 쓴 글(답 없음·빈칸·그림 생략 빼고)의 길이
+function writtenLen(s) {
+  if (!s || !s.ai) return 0;
+  return (s.ai.answers || []).map(a => String(a.text || '').replace(/\[조건:[^\]]*\]/g, '').replace(/\((답\s*없음|그림(\s*생략)?)\)|□/g, '').replace(/\s/g, '')).join('').length;
+}
+// 세특을 쓸 근거가 없는 학생(백지·거의 빈칸, 맞은 기준 없음)
+function noSeteukBasis(task, s) {
+  if (!s || !s.ai) return '';
+  if (s.ai.blank || writtenLen(s) < 15) return '답안이 비어 있어 세특을 쓰지 않았어요.';
+  if (!task.criteria.some((c, i) => finalMet(task, s, i))) return '맞은 기준이 없어 세특을 쓰지 않았어요.';
+  return '';
+}
 // 선생님이 AI 판단을 바꾼 기준이 있는지
 function teacherChanged(task, s) { return !!(s.ai && s.touched && task.criteria.some((c, i) => { const a = s.ai.criteria.find(x => x.index === i + 1); return a && !!a.met !== finalMet(task, s, i); })); }
 // 채점 때 함께 쓴 세특 초안을 그대로 쓸 수 있는지(판단이 그대로이고, 분량·금지어·근거가 맞을 때)
@@ -1839,6 +1913,8 @@ function draftOK(task, s, rng) {
 }
 async function runSeteuk(task, cls, no, signal) {
   const s = stu(cls, no);
+  const why = noSeteukBasis(task, s);
+  if (why && !s.memo) { s.seteuk = ''; s.seteukAI = ''; s.seteukFrom = 'none'; s.seteukStale = false; save(); return { text: '', b: 0, dist: 0, none: why }; }
   const set = App.settings(); let rng = [set.byteMin, set.byteMax];
   if (levelOf(task, s) === '하') rng = [Math.min(120, rng[0]), rng[1], 'low'];
   const ok = draftOK(task, s, rng);
@@ -1853,7 +1929,9 @@ async function runSeteuk(task, cls, no, signal) {
     const b = App.bytes(text);
     const dist = b > rng[1] ? b - rng[1] : b < rng[0] ? rng[0] - b : 0;
     // 문장마다 댄 근거 구절이 학생 답안에 실제로 있는지
-    const bad = all ? (r.quotes || []).filter(q => q && !/교사|메모/.test(q) && !found(q, all)) : [];
+    const quotes = (r.quotes || []).filter(Boolean);
+    const bad = all ? quotes.filter(q => !/교사|메모/.test(q) && !found(q, all)) : (text ? [text] : []);
+    if (text && !quotes.length && all) bad.push('(근거 구절 없음)');
     const score = dist + bad.length * 1000;
     if (!best || score < best.score) best = { text, b, dist, bad, score };
     if (bad.length) { unsupported = bad.map(q => '- ' + q); prev = { text, bytes: b }; continue; }
@@ -2244,6 +2322,10 @@ function xlsxAll(cid, cname) {
 
 /* ================= 동작 ================= */
 const ACT = {
+  navback() { history.back(); },
+  navfwd() { history.forward(); },
+  undo() { undoMove(UNDO.stack, UNDO.redo, '되돌렸'); },
+  redo() { undoMove(UNDO.redo, UNDO.stack, '다시 했'); },
   close: closeModal,
   sg(el) { const g = el.closest('.sg'); if (g.classList.contains('sheet')) { closeSheet(); return; } const o = !g.classList.contains('open'); g.classList.toggle('open', o); setSideOpen(el.dataset.k, o); },
   sheet(el) {
@@ -2311,13 +2393,14 @@ const ACT = {
   addtask(el) { const c = findCourse(el.dataset.id); const t = newTask(); c.tasks.push(t); save(); location.hash = '#/t/' + t.id; },
   deltask(el) {
     const { course, task } = findTask(el.dataset.id);
-    if (!confirm(`'${task.name}' 수행평가와 그 채점 기록을 지울까요?`)) return;
-    task.classes.forEach(k => delImgs(k.id + ':'));
+    if (!confirm(`'${task.name}' 수행평가와 그 채점 기록을 지울까요? (바로 되돌릴 수 있어요)`)) return;
+    snap(`'${task.name}' 지우기`); task.classes.forEach(k => gcLater(k.id));
     course.tasks = course.tasks.filter(t => t !== task); save();
-    if (el.dataset.stay && !location.hash.startsWith('#/t/')) { rerender(); toast(`'${task.name}'을 지웠어요.`); } else location.hash = '#/c/' + course.id;
+    if (el.dataset.stay && !location.hash.startsWith('#/t/')) rerender(); else location.hash = '#/c/' + course.id;
+    undoToast(`'${task.name}'을 지웠어요.`);
   },
   addcrit() { const t = curTask(); t.criteria.push({ text: '', guide: '', points: 0 }); save(); rerender(); },
-  delcrit(el) { const t = curTask(); t.criteria.splice(Number(el.dataset.i), 1); save(); rerender(); },
+  delcrit(el) { const t = curTask(); snap(`채점 기준 ${Number(el.dataset.i) + 1} 지우기`); t.criteria.splice(Number(el.dataset.i), 1); save(); rerender(); },
   addscale() { const t = curTask(); t.scale.push({ count: 0, score: 0 }); save(); rerender(); },
   delscale(el) { const t = curTask(); t.scale.splice(Number(el.dataset.i), 1); save(); rerender(); },
   addspec() { const t = curTask(); t.specials.push({ label: '백지 제출', score: 0 }); save(); rerender(); },
@@ -2336,12 +2419,13 @@ const ACT = {
   resplit(el) {
     const { cls } = findClass(el.dataset.id);
     cls.size = Math.max(1, Number($('#psize').value) || cls.size);
-    splitEvery(cls, Math.max(1, Number($('#pper').value) || 1)); save(); rerender();
+    snap('답안 다시 나누기'); splitEvery(cls, Math.max(1, Number($('#pper').value) || 1)); save(); rerender();
   },
   togstart(el) {
     const { cls } = gPages(); const i = Number(el.dataset.i);
     const firstLive = cls.pages.findIndex(p => !p.skip);
     if (i === firstLive) return;
+    snap(`${i + 1}쪽 ${cls.starts.includes(i) ? '이어붙이기' : '새 학생'}`);
     if (cls.starts.includes(i)) cls.starts = cls.starts.filter(x => x !== i); else cls.starts.push(i);
     rebuildSubs(cls); save(); rerender();
   },
@@ -2351,20 +2435,33 @@ const ACT = {
     const idx = cls.pages.map((p, i) => G.psel.has(p.id) ? i : -1).filter(i => i >= 0);
     if (idx.includes(to)) { toast('고른 쪽이 아닌 쪽 번호를 적어 주세요.'); return; }
     const hint = dropHint(cls, to, el.dataset.w === 'after');
+    snap(`${idx.length}쪽 옮기기`);
     if (movePages(cls, idx, to, el.dataset.w === 'after')) { G.psel.clear(); save(); rerender(); toast(`${idx.length}쪽 옮김 · ${hint.replace('붙이기', '붙였어요').replace('새 학생으로', '새 학생으로 넣었어요')}`); }
   },
-  async prot(el) { const { cls } = gPages(); BUSY++; try { await rotatePages(cls, [Number(el.dataset.i)], 90); } finally { BUSY--; } rotDone(cls); },
-  async protsel(el) { const { cls } = gPages(); const idx = cls.pages.map((p, i) => G.psel.has(p.id) ? i : -1).filter(i => i >= 0); BUSY++; try { await rotatePages(cls, idx, Number(el.dataset.d)); } finally { BUSY--; } rotDone(cls, idx.length); },
-  async protall(el) { const { cls } = gPages(); toast('모든 쪽을 돌리는 중…', 1500); BUSY++; try { await rotatePages(cls, cls.pages.map((_, i) => i), Number(el.dataset.d)); } finally { BUSY--; } rotDone(cls, cls.pages.length); },
+  async prot(el) { const { cls } = gPages(); snap(`${Number(el.dataset.i) + 1}쪽 돌리기`); BUSY++; try { await rotatePages(cls, [Number(el.dataset.i)], 90); } finally { BUSY--; } rotDone(cls); },
+  async protsel(el) { const { cls } = gPages(); snap(`${G.psel.size}쪽 돌리기`); const idx = cls.pages.map((p, i) => G.psel.has(p.id) ? i : -1).filter(i => i >= 0); BUSY++; try { await rotatePages(cls, idx, Number(el.dataset.d)); } finally { BUSY--; } rotDone(cls, idx.length); },
+  async protall(el) { const { cls } = gPages(); snap('모든 쪽 돌리기'); toast('모든 쪽을 돌리는 중…', 1500); BUSY++; try { await rotatePages(cls, cls.pages.map((_, i) => i), Number(el.dataset.d)); } finally { BUSY--; } rotDone(cls, cls.pages.length); },
   async autoorient(el) {
     const { cls } = findClass(el.dataset.id);
     if (!(App.settings().apiKey || '').trim()) { toast('설정에 API 키를 넣으면 방향을 자동으로 맞춰요.'); return; }
     cls.pages.forEach(p => { p.oc = false; }); cls.oriented = false;
     toast('오른쪽 아래에서 방향을 맞춰요. 그동안 다른 일을 해도 돼요.', 3000); orientJob(cls);
   },
-  pskip() { const { cls } = gPages(); cls.pages.forEach(p => { if (G.psel.has(p.id)) p.skip = true; }); G.psel.clear(); rebuildSubs(cls); save(); rerender(); },
+  pskip() { const { cls } = gPages(); snap(`${G.psel.size}쪽 빼기`); cls.pages.forEach(p => { if (G.psel.has(p.id)) p.skip = true; }); G.psel.clear(); rebuildSubs(cls); save(); rerender(); },
   pclear() { G.psel.clear(); rerender(); },
-  togskip(el) { const { cls } = gPages(); const p = cls.pages[Number(el.dataset.i)]; p.skip = !p.skip; rebuildSubs(cls); save(); rerender(); },
+  pdel() {
+    const { cls } = gPages(); const n = G.psel.size; if (!n) return;
+    snap(`${n}쪽 지우기`); removePages(cls, p => G.psel.has(p.id)); G.psel.clear(); save(true); rerender();
+    undoToast(`${n}쪽을 지웠어요.`);
+  },
+  pdelall(el) {
+    const { cls } = findClass(el.dataset.id); if (!cls.pages.length) return;
+    if (!confirm(`'${cls.name}'의 답안 그림 ${cls.pages.length}쪽을 모두 지울까요? 채점 기록은 남아요. (바로 되돌릴 수 있어요)`)) return;
+    snap(`그림 ${cls.pages.length}쪽 모두 지우기`); removePages(cls, () => true); save(true); rerender();
+    undoToast('답안 그림을 모두 지웠어요. 새 파일을 올리세요.');
+  },
+  replacefiles(el) { filePick(true, el.dataset.id, true); },
+  togskip(el) { const { cls } = gPages(); snap(`${Number(el.dataset.i) + 1}쪽 ${cls.pages[Number(el.dataset.i)].skip ? '되살리기' : '빼기'}`); const p = cls.pages[Number(el.dataset.i)]; p.skip = !p.skip; rebuildSubs(cls); save(); rerender(); },
   togabsent(el) {
     const { cls } = gPages(); const no = Number(el.dataset.no); const s = stu(cls, no);
     s.status = s.status === '미응시' ? '' : '미응시';
@@ -2379,12 +2476,13 @@ const ACT = {
   masks(el) { maskModal(el.dataset.id); },
   morefiles(el) { filePick(true, el.dataset.id); },
   relink(el) { filePick(false, el.dataset.id); },
-  renameclass(el) { const { cls } = findClass(el.dataset.id); const n = prompt('반 이름', cls.name); if (n && n.trim()) { cls.name = n.trim(); save(); rerender(); } },
+  renameclass(el) { const { cls } = findClass(el.dataset.id); const n = prompt('반 이름', cls.name); if (n && n.trim()) { snap(`'${cls.name}' 반 이름 바꾸기`); cls.name = n.trim(); save(); rerender(); } },
   async delclass(el) {
     const { task, cls } = findClass(el.dataset.id);
-    if (!confirm(`'${cls.name}' 반의 답안 그림과 채점 기록을 모두 지울까요?`)) return;
-    await delImgs(cls.id + ':');
+    if (!confirm(`'${cls.name}' 반의 답안 그림과 채점 기록을 모두 지울까요? (바로 되돌릴 수 있어요)`)) return;
+    snap(`'${cls.name}' 반 지우기`); gcLater(cls.id);
     task.classes = task.classes.filter(k => k !== cls); save(true); location.hash = '#/t/' + task.id;
+    undoToast(`'${cls.name}' 반을 지웠어요.`);
   },
   async batchgrade(el, e, only) {
     const { course, task, cls } = findClass(el.dataset.id); task._subject = course.name;
@@ -2523,7 +2621,7 @@ const ACT = {
   },
   splitask(el) { const c = findCourse(el.dataset.id); splitAsk(c, c.tasks.filter(t => partsOf(t) && !t.classes.length), () => rerender()); },
   copytask(el) {
-    const { course, task } = findTask(el.dataset.id);
+    const { course, task } = findTask(el.dataset.id); snap(`'${task.name}' 복사`);
     const c = copyTask(course, task);
     if (el.dataset.stay) { rerender(); toast(`'${c.name}'을 만들었어요. 카드 제목을 두 번 눌러 이름을 바꿀 수 있어요.`, 3500); return; }
     toast('복사본을 만들었어요. 이름과 채점 기준을 고쳐 쓰세요.', 3000);
@@ -2580,7 +2678,7 @@ const ACT = {
     const s = stu(cls, no);
     if (!s.touched && !s.ai && s.special == null && s.override == null) { toast('먼저 채점하거나 AI 채점을 실행해 주세요.'); return; }
     el.disabled = true; el.textContent = '세특 쓰는 중…';
-    try { const r = await runSeteuk(task, cls, no); if (gctx && gctx.no === no) rerender(); toast(`세특 ${r.b}바이트${r.dist ? ' — 목표 범위를 벗어나 직접 다듬어 주세요' : ''}`, 3500); }
+    try { const r = await runSeteuk(task, cls, no); if (gctx && gctx.no === no) rerender(); if (r.none) { toast(r.none + ' 관찰 메모를 적으면 그 내용으로 쓸 수 있어요.', 4500); return; } toast(`세특 ${r.b}바이트${r.dist ? ' — 목표 범위를 벗어나 직접 다듬어 주세요' : ''}`, 3500); }
     catch (e) { toast(e.message, 5000); el.disabled = false; el.textContent = '세특 만들기'; }
   },
   finish() {
@@ -2620,19 +2718,22 @@ const ACT = {
 };
 function curTask() { const id = location.hash.split('/')[2]; return findTask(id).task; }
 function gPages() { return findClass(location.hash.split('/')[2]); }
-function filePick(more, kid) {
+function filePick(more, kid, replace) {
   const { cls } = findClass(kid);
   const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = '.pdf,image/*';
   inp.onchange = async () => {
-    modal(`<h2>${more ? '파일 더 올리기' : 'PDF 다시 연결'}</h2><p id="fmsg" class="small"></p><div class="prog"><i id="fbar"></i></div>`);
+    if (!inp.files.length) return;
+    if (replace) { snap('파일 바꾸기'); removePages(cls, () => true); cls.oriented = false; }
+    modal(`<h2>${replace ? '파일 바꾸기' : more ? '파일 더 올리기' : 'PDF 다시 연결'}</h2><p id="fmsg" class="small"></p><div class="prog"><i id="fbar"></i></div>`);
     $('#modal').dataset.lock = '1';
     try {
       const n = await addPages(cls, [...inp.files], (m, f) => { $('#fmsg').textContent = m; $('#fbar').style.width = f * 100 + '%'; }, more ? null : cls.pages.map(p => p.id));
-      if (more) rebuildSubs(cls);
+      if (more) { if (!cls.starts.length) splitEvery(cls, cls.perStudent || 1); else rebuildSubs(cls); }
       else { cls._noimg = false; if (n !== cls.pages.length) toast(`쪽 수가 다릅니다(원래 ${cls.pages.length}쪽, 올린 파일 ${n}쪽). 같은 파일인지 확인하세요.`, 5000); }
       save(true);
     } catch (e) { toast(e.message, 4000); }
     delete $('#modal').dataset.lock; closeModal(); rerender();
+    if (replace) { undoToast('새 파일로 바꿨어요.'); if (needOrient(cls)) orientJob(cls); }
   };
   inp.click();
 }
@@ -2655,7 +2756,7 @@ function startRename(tid) {
   const inp = document.createElement('input'); inp.className = 'in tk-in'; inp.value = task.name;
   el.replaceWith(inp); inp.focus(); inp.select();
   let done = false;
-  const end = ok => { if (done) return; done = true; if (ok && inp.value.trim() && inp.value.trim() !== task.name) { task.name = inp.value.trim(); save(); toast('이름을 바꿨어요.'); } rerender(); };
+  const end = ok => { if (done) return; done = true; if (ok && inp.value.trim() && inp.value.trim() !== task.name) { snap(`'${task.name}' 이름 바꾸기`); task.name = inp.value.trim(); save(); toast('이름을 바꿨어요. (Ctrl+Z 되돌리기)'); } rerender(); };
   inp.onkeydown = e => { if (e.key === 'Enter') end(true); else if (e.key === 'Escape') end(false); };
   inp.onblur = () => end(true);
 }
@@ -2668,6 +2769,7 @@ document.addEventListener('mousedown', e => {
   if (!vp || e.button || G.addMark || e.target.closest('button,input,textarea,select,a,[data-act],.tr') || !vpScroll(vp)) return;
   VPAN = { vp, x: e.clientX, y: e.clientY, l: vp.scrollLeft, t: vp.scrollTop }; vp.classList.add('drag'); e.preventDefault();
 });
+document.addEventListener('dragstart', e => { if (e.target.closest && e.target.closest('#vpage, .kbox .mapimg')) e.preventDefault(); });
 document.addEventListener('mousemove', e => { if (!VPAN) return; VPAN.vp.scrollLeft = VPAN.l - (e.clientX - VPAN.x); VPAN.vp.scrollTop = VPAN.t - (e.clientY - VPAN.y); });
 document.addEventListener('mouseup', () => { if (VPAN) { VPAN.vp.classList.remove('drag'); VPAN = null; } });
 document.addEventListener('dblclick', e => { const t = e.target.closest('[data-ren]'); if (t) startRename(t.dataset.ren); });
@@ -2685,6 +2787,10 @@ document.addEventListener('change', e => {
   if (a && ACT[a.dataset.actChange]) ACT[a.dataset.actChange](a, e);
 });
 document.addEventListener('keydown', e => {
+  // Ctrl+Z 되돌리기, Ctrl+Y·Ctrl+Shift+Z 다시 하기(글을 쓰는 칸에서는 그 칸의 되돌리기)
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[zy]$/i.test(e.key) && !(e.target.closest && e.target.closest('input,textarea,select,[contenteditable]'))) {
+    e.preventDefault(); if (e.key.toLowerCase() === 'y' || e.shiftKey) ACT.redo(); else ACT.undo(); return;
+  }
   const typingAny = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   if (e.key === '?' && !typingAny && $('#modal').classList.contains('hide')) { helpModal(); return; }
   if (e.key === '/' && !typingAny && $('#modal').classList.contains('hide')) { e.preventDefault(); const q = $('#q'); if (q) { if (getComputedStyle($('.sbox')).display === 'none') document.body.classList.add('msearch'); q.focus(); q.select(); } return; }
@@ -2781,6 +2887,7 @@ function renderGsync() {
   }
   route();
   resumeJobs();
+  setTimeout(gcImgs, 8000);
   if (typeof Sync !== 'undefined') { Sync.onChange(renderGsync); renderGsync(); Sync.boot(); }
   AI.onUsage((u, ev) => {
     renderQuota(); const el = $('#susage'); if (el) el.innerHTML = usageHTML();

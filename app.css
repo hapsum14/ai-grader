@@ -691,3 +691,12 @@ details.aid[open]>summary{margin-bottom:10px}
 .vpage.pannable{cursor:grab}
 .vpage.drag{cursor:grabbing;user-select:none}
 .vpage.drag img{pointer-events:none}
+
+/* 뒤로·앞으로·되돌리기 */
+.navbtns{display:flex;align-items:center;gap:0;margin-right:4px}
+.navbtns .hbtn[disabled]{opacity:.3;cursor:default}
+#utoast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);z-index:61;display:flex;align-items:center;gap:10px;background:var(--text);color:var(--card);padding:8px 10px 8px 18px;border-radius:999px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:all .2s;max-width:calc(100vw - 32px)}
+#utoast.on{opacity:1;pointer-events:auto;transform:translateX(-50%)}
+#utoast button{border:0;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:700;border-radius:999px;padding:5px 12px;cursor:pointer}
+#utoast button.x{background:none;color:inherit;opacity:.6;padding:5px 6px}
+@media (max-width:600px){ .navbtns .hbtn[data-act=navback], .navbtns .hbtn[data-act=navfwd]{display:none} }
