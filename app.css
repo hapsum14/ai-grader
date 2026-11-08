@@ -553,3 +553,11 @@ details.aid[open]>summary{margin-bottom:10px}
 .qhr>b{color:var(--text)}
 .qhr span{color:var(--muted)}
 @media (max-width:600px){.qhr{grid-template-columns:1fr;gap:2px}}
+
+/* 카드 머리의 바로 쓰는 단추(이름 바꾸기·채점 기준·복사·지우기) */
+.tk-h{align-items:flex-start}
+.tk-h>div:first-child{flex:1;min-width:0}
+.tk-tools{display:flex;gap:2px;flex:none;align-items:center}
+.tk-tools .ibtn{width:28px;height:28px}
+.tk-tools .ibtn .ic{width:15px;height:15px}
+.tk-tools .ibtn.del:hover{color:var(--bad);background:var(--bad-soft)}

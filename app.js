@@ -494,14 +494,18 @@ function taskCard(t) {
   }).join('');
   return `<div class="tk" data-tk="${t.id}">
     <div class="tk-h"><div><div class="tk-t" title="두 번 누르면 이름 바꾸기" data-ren="${t.id}">${esc(t.name)}</div><div class="tk-m">${t.maxScore}점 · 기준 ${t.criteria.length}개${t.splitFrom ? ` · ${esc(t.splitFrom)}에서 나눔` : ''}</div></div>
-      <a class="ibtn" href="#/t/${t.id}" title="채점 기준 보기·고치기">${ic('task')}</a>
+      <div class="tk-tools">
+        <button class="ibtn" data-act="renametask" data-id="${t.id}" title="이름 바꾸기">${ic('pen')}</button>
+        <a class="ibtn" href="#/t/${t.id}" title="채점 기준 보기·고치기">${ic('task')}</a>
+        <button class="ibtn" data-act="copytask" data-id="${t.id}" data-stay="1" title="복사해서 하나 더">${ic('copy')}</button>
+        <button class="ibtn del" data-act="deltask" data-id="${t.id}" data-stay="1" title="수행평가 지우기">${ic('trash')}</button>
       <details class="menu"><summary class="ibtn" title="더 보기">${ic('more')}</summary><div class="mlist">
         <a href="#/t/${t.id}">${ic('task')}채점 기준 보기·고치기</a>
         <button data-act="renametask" data-id="${t.id}">${ic('pen')}이름 바꾸기</button>
         <button data-act="copytask" data-id="${t.id}" data-stay="1">${ic('copy')}복사해서 하나 더</button>
         ${partsOf(t) && !t.classes.length ? `<button data-act="splittask" data-id="${t.id}" data-stay="1">${ic('more')}평가 요소별로 나누기</button>` : ''}
         <button data-act="addclass" data-id="${t.id}">${ic('plus')}반 추가</button>
-        <button class="danger" data-act="deltask" data-id="${t.id}" data-stay="1">${ic('trash')}수행평가 지우기</button></div></details></div>
+        <button class="danger" data-act="deltask" data-id="${t.id}" data-stay="1">${ic('trash')}수행평가 지우기</button></div></details></div></div>
     ${ks || '<div class="tk-empty">답안을 올릴 반을 추가하세요</div>'}
     <button class="addk" data-act="addclass" data-id="${t.id}">+ 반 추가</button></div>`;
 }
