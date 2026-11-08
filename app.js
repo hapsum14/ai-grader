@@ -188,7 +188,7 @@ function seteukInfo(task, s) {
   const ratio = task.criteria.length ? met.length / task.criteria.length : 0;
   L.push(`성취 수준: ${s.special != null ? '하(특수 상황)' : ratio >= 0.8 ? '상' : ratio >= 0.5 ? '중' : '하'} (채점 기준 ${task.criteria.length}개 중 ${met.length}개 충족)`);
   L.push('충족한 채점 기준: ' + (met.join(' / ') || '없음'));
-  L.push('충족하지 못한 채점 기준: ' + (unmet.join(' / ') || '없음'));
+  L.push('충족하지 못한 채점 기준(세특에 쓰지 않음, 참고만): ' + (unmet.join(' / ') || '없음'));
   if (s.ai) {
     if (s.ai.transcript) L.push('학생 답안(인식 결과):\n' + s.ai.transcript);
     if (s.ai.observation) L.push('관찰 요약: ' + s.ai.observation);
@@ -237,7 +237,7 @@ const Style = {
   },
   // 이 수행평가와 낱말이 많이 겹치는 본보기 n개(겹침이 같으면 고르게 섞음)
   pick(task, n = 4) {
-    const all = this.get(); if (!all.length) return [];
+    const all = this.get().filter(t => !/수행평가|미흡|부족|못하|어려움|실수|오류/.test(t)); if (!all.length) return [];
     const words = new Set((task.name + ' ' + (task.assignment || '') + ' ' + task.criteria.map(c => c.text).join(' '))
       .match(/[가-힣]{2,}/g) || []);
     const stop = new Set(['하였는가', '있는가', '서술하였는가', '제시하였는가', '이해하고', '대한', '통해', '관점에서', '수행평가']);
@@ -250,6 +250,8 @@ const BRANDS = ['구글', '네이버', '다음카페', '유튜브', '유튜버',
 function lint(t) {
   const w = [];
   const fw = t.match(/나의|나만의|내가|대회/g); if (fw) w.push('쓰면 안 되는 말: ' + [...new Set(fw)].join(', '));
+  if (/수행평가/.test(t)) w.push("'수행평가' 대신 '~활동에서는', '~에서는'으로");
+  const neg = t.match(/미흡|부족|못하|못함|어려움|어려워|실수|오류가|아쉬|소홀|부진|틀린|틀렸/g); if (neg) w.push('부정적인 말: ' + [...new Set(neg)].join(', ') + ' → 해낸 것만');
   const bad = t.match(/[^\p{L}\p{N}\s.,\-]/gu); if (bad) w.push('마침표·쉼표·하이픈 밖의 특수문자: ' + [...new Set(bad)].join(' '));
   const inner = t.match(/(느낌|느꼈음|생각함|깨달음|알게 됨|알게 되었음|배움|다짐함|인식함|이해함)(?=\s*[.,]|\s*$)/g);
   if (inner) w.push('학생 입장 종결어: ' + [...new Set(inner)].join(', ') + ' → 관찰한 행동(설명함·분석함 등)으로');
