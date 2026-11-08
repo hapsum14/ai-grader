@@ -1806,7 +1806,7 @@ async function runSeteuk(task, cls, no, signal) {
   const styles = Style.pick(task, 3);
   let best = null, prev = null, unsupported = [];
   const all = (s.ai && s.ai.transcript) || '';
-  for (let k = 0; k < 2; k++) {
+  for (let k = 0; k < 3; k++) { if (k === 2 && !(best && best.b > rng[1])) break; // 세 번째는 너무 길 때만
     const r = await AI.seteuk(task, info, rng, prev, signal, styles, unsupported.length ? { unsupported } : {});
     const text = String(r.text || '').replace(/\s+/g, ' ').trim();
     const b = App.bytes(text);
