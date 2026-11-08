@@ -1489,6 +1489,22 @@ function vGrade(kid, no) {
   // 왼쪽: 제출물
   let left;
   if (!sub) left = `<div class="vpage"><div class="tr">${st === '미응시' ? '미응시로 표시된 학생입니다.' : '이 번호에 배정된 답안이 없습니다. <a href="#/k/' + cls.id + '/pages">답안 나누기</a>에서 확인하세요.'}</div></div>`;
+  else if (G.tab === 'key') {
+    const k = keyFor(task, cls, no);
+    const TYL = { student: '학생 조건에 따라', open: '열린 답' };
+    const stuAns = q => ((s.ai && s.ai.answers) || []).filter(a => AI.sameQ(a.no, q)).map(a => a.text).join(' / ');
+    left = `<div class="vpage"><div class="tr gkey">
+      ${k ? `<div class="gk-h"><b>${stuForm(cls, no) ? esc(stuForm(cls, no)) + '형 ' : ''}정답표</b>${k.checked ? '' : ' <span class="pill ai">확인 전</span>'}<span class="sp"></span>
+        <button class="btn sm" data-act="keyview" data-id="${cls.id}" ${stuForm(cls, no) !== formOf(cls) ? `data-f="${esc(stuForm(cls, no))}"` : ''}>${ic('pen')}고치기</button></div>
+        ${task.question ? `<div class="gk-memo"><b>채점 방향 메모</b> ${esc(task.question)}</div>` : ''}
+        ${(k.answers || []).map(a => `<div class="gk-r ${G.keyQ && AI.sameQ(a.no, G.keyQ) ? 'on' : ''}" data-gq="${esc(a.no)}">
+          <div class="gk-no">${esc(a.no)}</div>
+          <div class="gk-b">${a.q ? `<div class="gk-q">${esc(a.q)}</div>` : ''}
+            <div class="gk-a"><span class="lb">정답</span>${esc(a.answer || '')}</div>
+            ${a.type && a.type !== 'fixed' ? `<div class="gk-a rule"><span class="lb">${esc(TYL[a.type] || '')}</span>${esc(a.rule || '')}</div>` : ''}
+            ${stuAns(a.no) ? `<div class="gk-a stu"><span class="lb">학생 답</span>${esc(stuAns(a.no))}</div>` : ''}</div></div>`).join('')}`
+        : `<span class="muted">아직 정답표가 없어요. AI 채점을 하면 만들어져요.</span>`}</div></div>`;
+  }
   else if (G.tab === 'txt') left = qstripHTML(s) + (s.ai && s.ai.answers ? `<div class="vpage"><div class="tr ansbox">
       <div class="small muted" style="margin-bottom:8px">AI 가 읽은 학생 답이에요. 잘못 읽은 곳을 고치고 <b>다시 판단</b>을 누르세요(그림은 다시 보내지 않아요).</div>
       ${s.ai.answers.map((a, i) => `<div class="ar"><b>${esc(a.no)}</b><textarea class="in ansin" data-ai="${i}" rows="2">${esc(a.text)}</textarea></div>`).join('')}
@@ -1521,7 +1537,7 @@ function vGrade(kid, no) {
         ${mine && a && a.reason && s.creason[i] !== a.reason ? `<div class="aiorig"><span>AI: ${esc(a.reason)}</span><button class="lnk" data-act="whyreset" data-i="${i}">AI 것으로</button></div>` : ''}</div>` : '';
     return `<div class="citem"><label class="crow">
       ${task.mode === 'points' ? `<span class="cno">${i + 1}</span>` : `<input type="checkbox" data-act="chk" data-i="${i}" ${checked ? 'checked' : ''}>`}
-      <span class="ct">${task.mode === 'points' ? '' : `<span class="cno">${i + 1}</span>`}${esc(c.text)}${kq(i) ? ` <span class="qtag" title="${esc(((gkey && gkey.answers) || []).filter(x => String(x.no).split(/[-(.\s]/)[0] === kq(i)).map(x => x.q).filter(Boolean).join(' / ') || '이 기준은 이 문항의 정답으로 판단해요')}">문항 ${esc(kq(i))}</span>` : ''}</span>
+      <span class="ct">${task.mode === 'points' ? '' : `<span class="cno">${i + 1}</span>`}${esc(c.text)}${kq(i) ? ` <span class="qtag" data-act="gotoq" data-q="${esc(kq(i))}" title="누르면 정답표에서 이 문항 보기 — "${esc(((gkey && gkey.answers) || []).filter(x => String(x.no).split(/[-(.\s]/)[0] === kq(i)).map(x => x.q).filter(Boolean).join(' / ') || '이 기준은 이 문항의 정답으로 판단해요')}">문항 ${esc(kq(i))}</span>` : ''}</span>
       <span class="row" style="gap:6px">${a && a.unsure ? `<span class="mark u" title="${esc(a.unsure)} — 직접 확인해 주세요">애매</span>` : ''}${a ? `<span class="mark ${a.met ? 'y' : 'n'}" title="AI 판단">${a.met ? 'AI ✓' : 'AI ✗'}</span>` : ''}${a && s.touched && finalMet(task, s, i) !== !!a.met ? `<span class="mark t" title="선생님 판단이 최종이에요(세특도 이 판단으로)">선생님 ${finalMet(task, s, i) ? '✓' : '✗'}</span>` : ''}
         ${task.mode === 'points' ? `<input class="ptinput" type="number" step="0.5" min="0" max="${c.points}" value="${s.touched ? (s.pts[i] || 0) : ''}" data-act="pt" data-i="${i}"><span class="faint small">/${c.points}</span>` : ''}</span>
     </label>${why}</div>`;
@@ -1572,7 +1588,8 @@ function vGrade(kid, no) {
   <div class="gbody">
     <div class="viewer">
       <div class="vtabs"><button class="vtab ${G.tab === 'img' ? 'on' : ''}" data-act="vtab" data-t="img">원본</button>
-        <button class="vtab ${G.tab === 'txt' ? 'on' : ''}" data-act="vtab" data-t="txt">AI 가 읽은 글</button></div>
+        <button class="vtab ${G.tab === 'txt' ? 'on' : ''}" data-act="vtab" data-t="txt">AI 가 읽은 글</button>
+        <button class="vtab ${G.tab === 'key' ? 'on' : ''}" data-act="vtab" data-t="key" title="이 학생 시험지 형의 정답표 (K)">정답표</button></div>
       ${left}
     </div>
     <div class="gside">
@@ -2691,6 +2708,11 @@ const ACT = {
   xlsxall(el) { xlsxAll(el.dataset.id, el.dataset.n); },
   // ---- 채점 화면
   vtab(el) { G.tab = el.dataset.t; rerender(); },
+  gotoq(el, e) {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    G.tab = 'key'; G.keyQ = String(el.dataset.q).split(/\s*,\s*/)[0]; rerender();
+    setTimeout(() => { const r = document.querySelector('.gkey .gk-r.on'); if (r) r.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 50);
+  },
   pg(el) { const sub = subOf(gctx.cls, gctx.no); G.page = Math.max(0, Math.min(sub.pages.length - 1, G.page + Number(el.dataset.d))); rerender(); },
   pgset(el) { G.page = Number(el.dataset.i); rerender(); },
   rot() { G.rot = (G.rot + 90) % 360; rerender(); },

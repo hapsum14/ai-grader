@@ -818,3 +818,22 @@ body.grading #appfoot{display:none}
 #appfoot{display:none}
 @media (max-width:1100px){ #tcredit{display:none} #appfoot{display:flex} }
 body.grading #appfoot{display:none}
+
+/* 채점 화면의 정답표 탭 */
+.vpage .tr.gkey{max-width:900px;display:flex;flex-direction:column;gap:8px}
+.gkey .gk-h{display:flex;align-items:center;gap:8px;font-size:15px}
+.gkey .gk-memo{font-size:13px;padding:8px 12px;border-radius:10px;background:var(--accent-soft);color:var(--text);white-space:pre-wrap}
+.gkey .gk-memo b{color:var(--accent);margin-right:6px}
+.gkey .gk-r{display:grid;grid-template-columns:auto 1fr;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;white-space:normal;transition:box-shadow .2s}
+.gkey .gk-r.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.gkey .gk-no{font-weight:800;color:var(--accent);min-width:34px}
+.gkey .gk-b{display:flex;flex-direction:column;gap:5px;min-width:0}
+.gkey .gk-q{font-size:13px;color:var(--muted)}
+.gkey .gk-a{font-size:14px;line-height:1.6}
+.gkey .gk-a .lb{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:6px;margin-right:6px;background:var(--ok-soft);color:var(--ok);vertical-align:1px}
+.gkey .gk-a.rule .lb{background:var(--ai-soft);color:var(--ai)}
+.gkey .gk-a.stu{color:var(--muted)}
+.gkey .gk-a.stu .lb{background:var(--bg2,#f1f0f5);color:var(--muted)}
+.qtag[data-act=gotoq]{cursor:pointer}
+.qtag[data-act=gotoq]:hover{background:var(--accent);color:var(--accent-ink)}
+body.grading #tcredit{display:none}
