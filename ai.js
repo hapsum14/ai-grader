@@ -413,6 +413,15 @@ const AI = (() => {
 - 채점 기준 번호와 문항 번호는 같지 않을 수 있다. 기준 문장의 내용과 문항이 묻는 것을 맞춰 대응을 정한다.`, parts, schema: KEY_SCHEMA, temperature: 0.1, think: P.think, _model: P.model });
   }
 
+  // 0) 쪽 방향: 작게 줄인 그림(이름은 읽히지 않는 크기)으로 글자가 바로 서려면 몇 도 돌려야 하는지
+  const ORIENT_SCHEMA = O({ rotate: I('글자가 똑바로 읽히려면 그림을 시계 방향으로 돌려야 하는 각도: 0, 90, 180, 270 중 하나') });
+  async function orient(b64, signal) {
+    if (isMock()) { await sleep(150, signal); return { rotate: 0 }; }
+    const r = await call({ system: '너는 스캔한 시험지의 방향을 판단한다. 인쇄된 제목·표 머리·글자의 방향만 본다.', parts: [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }, { text: '이 시험지 한 쪽의 글자가 똑바로(제목이 위쪽, 왼쪽에서 오른쪽으로) 읽히려면 그림을 시계 방향으로 몇 도 돌려야 하나요? 이미 똑바르면 0.' }],
+      schema: ORIENT_SCHEMA, temperature: 0, signal, think: 'low', _model: MODELS.lite });
+    const d = Number(r.rotate); return { rotate: [0, 90, 180, 270].includes(d) ? d : 0 };
+  }
+
   // 2) 읽기: 학생 답을 문항별로 그대로 옮긴다(판단하지 않음)
   const READ_SCHEMA = O({
     answers: A(O({
@@ -567,5 +576,5 @@ const AI = (() => {
     return { text: t, level: '분석', quotes: ['(모의) 1번 학생 답'] };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, onUsage: f => useL.push(f) };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, onUsage: f => useL.push(f) };
 })();

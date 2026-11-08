@@ -174,6 +174,79 @@ function rebuildSubs(cls) {
   groups.forEach(g => { if (g.fixed) return; while (used.has(n) || absent(n)) n++; g.no = n; used.add(n); n++; });
   cls.subs = groups.map(g => ({ id: uid(), no: g.no, fixed: !!g.fixed, pages: g.pages }));
 }
+function movePages(cls, idxs, target, afterIt) {
+  const pick = new Set(idxs);
+  if (!pick.size || pick.has(target)) return false;
+  // 쪽의 오른쪽(뒤)에 놓으면 그 학생에 붙이고, 학생 첫 쪽의 왼쪽(앞)에 놓으면 새 학생으로 넣는다
+  const firstLive = cls.pages.findIndex(p => !p.skip);
+  const newStudent = !afterIt && (target === firstLive || cls.starts.includes(target));
+  const startObjs = new Set(cls.starts.map(i => cls.pages[i]));
+  const fixedBy = new Map(cls.subs.filter(x => x.fixed).map(x => [cls.pages[x.pages[0]], x.no]));
+  const moving = cls.pages.filter((_, i) => pick.has(i));
+  const rest = cls.pages.filter((_, i) => !pick.has(i));
+  let at = rest.indexOf(cls.pages[target]) + (afterIt ? 1 : 0);
+  const order = [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+  if (order.every((p, i) => p === cls.pages[i]) && startObjs.has(moving[0]) === newStudent) return false;
+  if (newStudent) startObjs.add(moving[0]); else startObjs.delete(moving[0]);
+  cls.pages = order;
+  cls.starts = order.map((p, i) => startObjs.has(p) ? i : -1).filter(i => i >= 0);
+  // 고정 번호는 첫 쪽을 따라간다(rebuildSubs 가 첫 쪽 자리로 찾음)
+  cls.subs = [...fixedBy].map(([p, no]) => ({ id: uid(), no, fixed: true, pages: [order.indexOf(p)] }));
+  rebuildSubs(cls);
+  return { newStudent, idx: moving.map(p => order.indexOf(p)) };
+}
+// 쪽 돌리기: 그림을 실제로 돌려 새 그림으로 저장한다(가리기·AI·채점 화면이 모두 같은 방향을 보게)
+async function rotBlob(blob, deg) {
+  const bm = await createImageBitmap(blob);
+  const c = document.createElement('canvas'), q = deg % 180 !== 0;
+  c.width = q ? bm.height : bm.width; c.height = q ? bm.width : bm.height;
+  const g = c.getContext('2d'); g.translate(c.width / 2, c.height / 2); g.rotate(deg * Math.PI / 180); g.drawImage(bm, -bm.width / 2, -bm.height / 2);
+  return await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
+}
+async function rotatePages(cls, idxs, deg) {
+  deg = ((deg % 360) + 360) % 360;
+  for (const i of idxs) {
+    const p = cls.pages[i]; if (!p) continue;
+    p.oc = true; if (!deg) continue;
+    const [b, t] = [await getImg(p.id), await getImg(p.id + ':t')];
+    if (!b) continue;
+    const id = cls.id + ':' + uid();
+    await DB.put('img', id, await rotBlob(b, deg)); await DB.put('img', id + ':t', await rotBlob(t || b, deg));
+    if (typeof Sync !== 'undefined') Sync.queueImg(id);
+    const old = p.id; if (G.psel && G.psel.has(old)) { G.psel.delete(old); G.psel.add(id); }
+    p.id = id; if (deg % 180) [p.w, p.h] = [p.h, p.w];
+    delImgs(old).catch(() => {}); urlCache.delete(old); urlCache.delete(old + ':t');
+  }
+  save();
+}
+// 방향 자동 맞추기: 학생마다 같은 자리(1쪽·2쪽…)는 대개 같은 방향이라 자리마다 2~3쪽만 AI 에게 묻고 그 자리 전체에 적용
+async function autoOrient(cls, onMsg) {
+  const todo = []; cls.subs.forEach(x => x.pages.forEach((pi, k) => { if (!cls.pages[pi].oc && !cls.pages[pi].skip) todo.push({ pi, k }); }));
+  if (!todo.length) return 0;
+  const byPos = {}; todo.forEach(t => (byPos[t.k] = byPos[t.k] || []).push(t.pi));
+  const ask = async pi => { const b = await getImg(cls.pages[pi].id); if (!b) return null; return (await AI.orient(await Parse.maskedBase64(b, [], 320))).rotate; };
+  let turned = 0, n = 0; const total = Object.keys(byPos).length;
+  for (const [k, list] of Object.entries(byPos)) {
+    onMsg && onMsg(`${Number(k) + 1}번째 쪽 방향 확인 중 (${++n}/${total})`);
+    const sample = [list[0], list[Math.floor(list.length / 2)], list[list.length - 1]].filter((v, i, a) => a.indexOf(v) === i).slice(0, list.length > 2 ? 3 : 2);
+    const ans = []; for (const pi of sample) ans.push(await ask(pi));
+    const cnt = {}; ans.filter(v => v != null).forEach(v => cnt[v] = (cnt[v] || 0) + 1);
+    const [best, m] = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0] || [0, 0];
+    if (m >= Math.max(2, Math.ceil(sample.length / 2)) || sample.length === 1) {
+      const deg = Number(best); await rotatePages(cls, list, deg); if (deg) turned += list.length;
+    } else { // 서로 다르면 그 자리 쪽은 하나씩 확인
+      for (const pi of list) { const d = await ask(pi); await rotatePages(cls, [pi], d || 0); if (d) turned++; }
+    }
+  }
+  return turned;
+}
+// 끄는 동안 쪽 위에 보일 말
+function dropHint(cls, i, right) {
+  const firstLive = cls.pages.findIndex(p => !p.skip);
+  const x = cls.subs.find(s => s.pages.includes(i));
+  if (!right && (i === firstLive || cls.starts.includes(i))) return '여기 앞에 새 학생으로';
+  return x ? `${x.no}번 학생에 붙이기` : '여기에 넣기';
+}
 function splitEvery(cls, k) {
   cls.perStudent = k;
   cls.starts = []; let c = 0;
@@ -841,6 +914,7 @@ function addClassModal(tid) {
       task.classes.push(cls); save(true);
       delete $('#modal').dataset.lock; closeModal();
       location.hash = `#/k/${cls.id}/pages`;
+      if (needOrient(cls)) setTimeout(() => orientJob(cls), 300);
     } catch (e) {
       delete $('#modal').dataset.lock; $('#cgo').disabled = false; toast('읽지 못했습니다: ' + e.message, 4000);
     }
@@ -882,24 +956,33 @@ function vPages(kid) {
   const missing = nos.filter(n => !subOf(cls, n) && !absent.includes(n));
   const over = cls.subs.filter(s => s.no > cls.size);
   const firstLive = cls.pages.findIndex(p => !p.skip);
+  const sel = G.psel = (G.psel && G.psel.kid === cls.id) ? G.psel : Object.assign(new Set(), { kid: cls.id });
+  [...sel].forEach(id => { if (!cls.pages.some(p => p.id === id)) sel.delete(id); });
+  // 쪽마다 몇 번 학생의 몇째 쪽인지
+  const whose = {}; cls.subs.forEach(x => x.pages.forEach((pi, k) => { whose[pi] = { no: x.no, k: k + 1, n: x.pages.length }; }));
   const thumbs = cls.pages.map((p, i) => {
-    const s = startNo[i];
-    if (i === firstLive) return `<div class="th start">
-      <img data-thumb="${p.id}:t" alt="" data-act="bigpage" data-i="${i}">${s ? `<span class="badge">${s.no}번</span>` : ''}
-      <div class="tools"><button data-act="togskip" data-i="${i}">빼기</button></div>
-      <div class="cap"><span>${i + 1}쪽</span>${s ? `<span>번호 <input class="ptinput" style="width:46px" type="number" value="${s.no}" data-act="setno" data-i="${i}"></span>` : ''}</div></div>`;
-    return `<div class="th ${s ? 'start' : ''} ${p.skip ? 'skip' : ''}">
-      <img data-thumb="${p.id}:t" alt="" data-act="bigpage" data-i="${i}">
-      ${s ? `<span class="badge">${s.no}번</span>` : ''}
-      <div class="tools">${p.skip ? '' : `<button data-act="togstart" data-i="${i}" title="이 쪽부터 다음 학생">${s ? '이어붙이기' : '새 학생'}</button>`}<button data-act="togskip" data-i="${i}">${p.skip ? '되살리기' : '빼기'}</button></div>
+    const s = startNo[i], w = whose[i], on = sel.has(p.id);
+    const startBtn = p.skip || i === firstLive ? '' : `<button data-act="togstart" data-i="${i}" title="이 쪽부터 다음 학생">${s ? '이어붙이기' : '새 학생'}</button>`;
+    return `<div class="th ${s ? 'start' : ''} ${p.skip ? 'skip' : ''} ${on ? 'sel' : ''}" draggable="true" data-pi="${i}" data-pid="${p.id}">
+      <img data-thumb="${p.id}:t" alt="" data-act="bigpage" data-i="${i}" draggable="false">
+      <button class="pchk" data-pchk="${i}" title="고르기 (Ctrl·Shift 를 누르고 쪽을 눌러도 돼요)">${on ? ic('check') : ''}</button>
+      ${s ? `<span class="badge">${s.no}번</span>` : w ? `<span class="badge sub">${w.no}번 ${w.k}/${w.n}</span>` : ''}
+      <div class="tools"><button class="rot" data-act="prot" data-i="${i}" title="이 쪽을 시계 방향으로 90° 돌리기">↻</button>${startBtn}<button data-act="togskip" data-i="${i}">${p.skip ? '되살리기' : '빼기'}</button></div>
       <div class="cap"><span>${i + 1}쪽</span>${s ? `<span>번호 <input class="ptinput" style="width:46px" type="number" value="${s.no}" data-act="setno" data-i="${i}"></span>` : ''}</div>
     </div>`;
   }).join('');
+  const selIdx = cls.pages.map((p, i) => sel.has(p.id) ? i : -1).filter(i => i >= 0);
+  const selBar = `<div class="psel ${selIdx.length ? '' : 'hide'}" id="psel"><b>${selIdx.length}쪽 고름</b><span class="faint">${selIdx.map(i => i + 1).join(', ')}쪽</span>
+      <span class="sp"></span><label>쪽 번호 <input class="in num" id="pmto" type="number" min="1" max="${cls.pages.length}" placeholder="몇"></label>
+      <button class="btn sm" data-act="pmove" data-w="before">그 쪽 앞으로</button><button class="btn sm" data-act="pmove" data-w="after">그 쪽 뒤로</button>
+      <button class="btn sm" data-act="protsel" data-d="270" title="왼쪽으로 90°">↺</button><button class="btn sm" data-act="protsel" data-d="90" title="오른쪽으로 90°">↻ 돌리기</button><button class="btn sm" data-act="protsel" data-d="180">180°</button>
+      <button class="btn sm" data-act="pskip">빼기</button><button class="btn sm ghost" data-act="pclear">고르기 풀기</button></div>`;
   after = () => {
     loadThumbs();
     $$('[data-act="setno"]').forEach(el => el.addEventListener('change', () => {
       const s = startNo[Number(el.dataset.i)]; s.no = Number(el.value); s.fixed = true; rebuildSubs(cls); save(); rerender();
     }));
+    pageDrag(cls);
   };
   const imgMissing = cls.pages.length && !cls._imgChecked;
   if (imgMissing) { cls._imgChecked = true; getImg(cls.pages[0].id + ':t').then(b => { if (!b) { cls._noimg = true; rerender(); } }); }
@@ -915,6 +998,11 @@ function vPages(kid) {
       <button class="btn" data-act="resplit" data-id="${cls.id}">이대로 다시 나누기</button>
       <button class="btn" data-act="morefiles" data-id="${cls.id}">${ICON.up}파일 더 올리기</button>
       <button class="btn soft" data-act="masks" data-id="${cls.id}">${ICON.img}이름 칸 가리기 ${cls.masks.length ? `(${cls.masks.length}곳)` : '(아직 없음)'}</button>
+    </div>
+    <div class="row orow"><span class="small muted">쪽 방향</span>
+      <button class="btn sm" data-act="autoorient" data-id="${cls.id}" title="AI 가 자리마다 2~3쪽을 보고 방향을 맞춰요(작게 줄여 보내 이름은 읽히지 않아요)">${ic('bot')}자동으로 맞추기</button>
+      <span class="small faint">전체</span><button class="btn sm" data-act="protall" data-d="270">↺ 왼쪽</button><button class="btn sm" data-act="protall" data-d="90">↻ 오른쪽</button><button class="btn sm" data-act="protall" data-d="180">180°</button>
+      <span class="small faint">한 쪽만은 쪽의 ↻, 여러 쪽은 골라서 돌려요</span>
       <button class="btn sm danger" data-act="delclass" data-id="${cls.id}" style="margin-left:auto">반 지우기</button>
     </div>
     <label class="f" style="margin-top:14px">미응시 번호 <span class="faint">— 누르면 그 번호를 건너뛰어요</span></label>
@@ -923,7 +1011,60 @@ function vPages(kid) {
     ${over.length ? `<p class="note" style="margin-top:12px">답안이 학생 수보다 많아요(${over.map(s => s.no + '번').join(', ')}). 쪽 수나 빼야 할 쪽을 확인하세요.</p>` : ''}
     ${!cls.masks.length ? `<p class="note blue" style="margin-top:12px">AI 로 보내기 전에 <b>이름 칸 가리기</b>를 해 주세요.</p>` : ''}
   </div>
-  <div class="thumbs">${thumbs}</div>`;
+  <p class="small muted" style="margin:0 0 8px">쪽을 <b>끌어서</b> 옮겨요. 여러 쪽은 왼쪽 위 네모(또는 <b>Ctrl·Shift + 누르기</b>)로 고른 뒤 함께 끌어요. 쪽의 <b>오른쪽</b>에 놓으면 그 학생에 붙고, 학생 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생으로 들어가요.</p>
+  ${selBar}
+  <div class="thumbs" id="thumbs">${thumbs}</div>`;
+}
+// 쪽 고르기(Ctrl·Shift·네모) · 끌어 옮기기
+function pageDrag(cls) {
+  const box = $('#thumbs'); if (!box) return;
+  const sel = G.psel;
+  const idxOf = el => Number(el.dataset.pi);
+  const toggle = (i, range) => {
+    const id = cls.pages[i].id;
+    if (range && G.plast != null) { const [a, b] = [Math.min(G.plast, i), Math.max(G.plast, i)]; for (let k = a; k <= b; k++) sel.add(cls.pages[k].id); }
+    else if (sel.has(id)) sel.delete(id); else sel.add(id);
+    G.plast = i; rerender();
+  };
+  box.addEventListener('click', e => {
+    const chk = e.target.closest('[data-pchk]');
+    if (chk) { e.preventDefault(); e.stopPropagation(); toggle(Number(chk.dataset.pchk), e.shiftKey); return; }
+    const th = e.target.closest('.th');
+    if (th && (e.ctrlKey || e.metaKey || e.shiftKey) && !e.target.closest('button,input')) { e.preventDefault(); e.stopPropagation(); toggle(idxOf(th), e.shiftKey); }
+  }, true);
+  let drag = null, mark = null;
+  const clearMark = () => { if (mark) { mark.classList.remove('dropL', 'dropR'); delete mark.dataset.drop; } mark = null; };
+  box.addEventListener('dragstart', e => {
+    const th = e.target.closest('.th'); if (!th || e.target.closest('input')) return;
+    const i = idxOf(th);
+    if (!sel.has(cls.pages[i].id)) { sel.clear(); sel.add(cls.pages[i].id); }
+    drag = cls.pages.map((p, k) => sel.has(p.id) ? k : -1).filter(k => k >= 0);
+    e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', 'pages'); } catch (x) {}
+    drag.forEach(k => { const el = box.querySelector(`[data-pi="${k}"]`); if (el) el.classList.add('dragging'); });
+    if (drag.length > 1) { const g = document.createElement('div'); g.className = 'dragghost'; g.textContent = `${drag.length}쪽 옮기기`; document.body.appendChild(g); e.dataTransfer.setDragImage(g, 20, 14); setTimeout(() => g.remove(), 0); }
+  });
+  box.addEventListener('dragover', e => {
+    if (!drag) return; const th = e.target.closest('.th'); if (!th) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    const r = th.getBoundingClientRect(), right = e.clientX > r.left + r.width / 2;
+    if (mark !== th) clearMark(); mark = th;
+    th.classList.toggle('dropR', right); th.classList.toggle('dropL', !right); th.dataset.drop = dropHint(cls, idxOf(th), right);
+    // 끄는 동안 화면 끝에 가면 저절로 넘김
+    const sc = document.scrollingElement, m = 70; const main = th.closest('.main, main, #main') || sc;
+    if (e.clientY < m) (main.scrollBy ? main : sc).scrollBy(0, -18); else if (e.clientY > innerHeight - m) (main.scrollBy ? main : sc).scrollBy(0, 18);
+  });
+  box.addEventListener('dragleave', e => { if (mark && !mark.contains(e.relatedTarget)) clearMark(); });
+  box.addEventListener('drop', e => {
+    if (!drag) return; e.preventDefault();
+    const th = e.target.closest('.th'); const right = th && th.classList.contains('dropR'); clearMark();
+    const list = drag; drag = null;
+    if (!th) return rerender();
+    const hint = dropHint(cls, idxOf(th), right);
+    const moved = movePages(cls, list, idxOf(th), right);
+    if (moved) { G.plast = null; sel.clear(); save(); rerender(); toast(`${list.length}쪽 옮김 · ${hint.replace('붙이기', '붙였어요').replace('새 학생으로', '새 학생으로 넣었어요')}${Object.values(cls.students).some(x => x.ai) ? ' · 이미 채점한 학생은 다시 채점해 주세요' : ''}`, 3500); }
+    else rerender();
+  });
+  box.addEventListener('dragend', () => { clearMark(); if (drag) { drag = null; rerender(); } });
 }
 function loadThumbs() {
   $$('img[data-thumb]').forEach(async im => { const u = await imgURL(im.dataset.thumb); if (u) im.src = u; });
@@ -972,7 +1113,13 @@ function maskModal(kid) {
     $('#mnext').onclick = () => { si = Math.min(cls.subs.length - 1, si + 1); draw(); };
     $('#mscope').onchange = e => { scope = Number(e.target.value); draw(); };
     $('#mclear').onclick = () => { masks = masks.filter(m => m.page !== scope); paint(); };
-    $('#msave').onclick = () => { cls.masks = masks; save(); closeModal(); rerender(); toast('가림 영역을 저장했습니다.'); };
+    $('#msave').onclick = () => {
+      cls.masks = masks; save(); closeModal(); rerender(); toast('가림 영역을 저장했습니다.');
+      const { task } = findClass(cls.id);
+      if (masks.length && task && needPrep(task, cls) && (App.settings().apiKey || '').trim() && !jobFor('key:' + cls.id)) {
+        toast('가린 답안지로 정답표를 미리 만들어 둘게요(오른쪽 아래).', 3500); keyJob(task, cls);
+      }
+    };
   };
   draw();
 }
@@ -1353,14 +1500,18 @@ async function makeKeyFor(task, cls) {
 }
 function needPrep(task, cls) { return !!task.criteria.length && !keyOf(task, cls); }
 // AI 채점 전: 이 반의 시험지 형과 정답표가 없으면 만들고, 선생님이 아직 확인하지 않았으면 확인 창
+function rotDone(cls, n) {
+  rerender();
+  if (n) toast(`${n}쪽을 돌렸어요.${cls.masks.length ? ' 이름 칸 가리기 위치를 다시 확인해 주세요.' : ''}`, 3000);
+  else if (cls.masks.length) toast('이름 칸 가리기 위치를 다시 확인해 주세요.', 3000);
+}
 async function prepGrade(task, cls, then) {
   if (!keyOf(task, cls)) {
-    modal(`<h2>채점 준비</h2><p>${esc(cls.name)} 첫 답안지(이름 가림)로 <b>시험지 형</b>과 <b>정답표</b>를 만드는 중… <span class="faint">(형마다 한 번, 30초~1분)</span></p><div class="prog"><i style="width:60%"></i></div>`);
-    $('#modal').dataset.lock = '1';
-    try { await makeKeyFor(task, cls); }
-    catch (e) { delete $('#modal').dataset.lock; closeModal(true); toast('정답표를 만들지 못했어요: ' + e.message, 5000); return; }
-    delete $('#modal').dataset.lock; closeModal(true);
+    if (jobFor('key:' + cls.id)) { toast('정답표를 만드는 중이에요. 다 되면 확인 창이 떠요.', 3000); return; }
+    toast('오른쪽 아래에서 정답표를 만들어요. 그동안 다른 일을 해도 돼요.', 3500);
+    keyJob(task, cls, then); return;
   }
+  if (needOrient(cls)) { toast('오른쪽 아래에서 쪽 방향을 맞춘 뒤 채점을 시작해요.', 3000); if (await orientJob(cls)) prepGrade(task, cls, then); return; }
   const key = keyOf(task, cls);
   if (key && !key.checked) { keyModal(task, cls, then); return; }
   then();
@@ -1509,8 +1660,12 @@ function renderJobs() {
       <div class="row" style="gap:6px"><button class="btn sm primary" data-act="jobresume" data-j="${j.id}">이어서 하기</button>
         <a class="btn sm" href="#/k/${j.resume.clsId}">반 화면</a></div></div>`;
     const n = j.ok + j.fail, pct = j.total ? Math.round(n / j.total * 100) : 0;
-    const head = j.done ? (j.stopped ? '멈춤' : '끝') + ` — 성공 ${j.ok}, 실패 ${j.fail}`
+    const head = j.done && j.doneMsg ? j.doneMsg : j.done ? (j.stopped ? '멈춤' : '끝') + ` — 성공 ${j.ok}, 실패 ${j.fail}`
       : j.phase || `${n}/${j.total}명 · 성공 ${j.ok}${j.fail ? ', 실패 ' + j.fail : ''}`;
+    if (j.one) return `<div class="job${j.done ? ' done' : ''}">
+      <div class="jh"><span class="spin${j.done ? ' hide' : ''}"></span><b>${esc(j.title)}</b><span class="sp"></span>${j.done ? `<button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button>` : ''}</div>
+      <div class="jm">${esc(head)}${j.where && location.hash !== j.where ? ` · <a href="${j.where}">반 화면</a>` : ''}</div>
+      ${j.done ? (j.onBtn ? `<div class="row" style="gap:6px;margin-top:6px"><button class="btn sm primary" data-act="jobbtn" data-j="${j.id}">${esc(j.btnLabel || '열기')}</button></div>` : '') : '<div class="prog indet"><i></i></div>'}</div>`;
     return `<div class="job${j.done ? ' done' : ''}">
       <div class="jh"><span class="spin${j.done ? ' hide' : ''}"></span><b>${esc(j.title)}</b><span class="sp"></span>
         <button class="ibtn" data-act="jobtoggle" data-j="${j.id}" title="기록 보기">${j.open ? '▾' : '▸'}</button>
@@ -1532,6 +1687,50 @@ function softRefresh(clsId, no) {
   if (h === '#/k/' + clsId || h === '' || h === '#/' || h.startsWith('#/t/') || h.startsWith('#/c/')) rerender();
   // 채점 화면: 지금 보고 있는 그 학생의 AI 결과가 막 들어왔을 때만
   else if (no != null && h === '#/g/' + clsId + '/' + no) rerender();
+}
+// 한 번에 끝나는 일(쪽 방향, 정답표 만들기)을 뒤에서. 화면은 막지 않는다
+function bgJob(o) {
+  const cur = jobFor(o.key); if (cur) return cur.promise;
+  const j = { id: uid(), key: o.key, title: o.title, total: 0, ok: 0, fail: 0, log: [], done: false, open: false, where: o.where || '', phase: o.phase || '준비 중…', ctl: new AbortController(), one: true };
+  JOBS.push(j); BUSY++; renderJobs();
+  j.promise = (async () => {
+    try { await o.run(j); }
+    catch (e) { j.fail = 1; j.doneMsg = '못 했어요: ' + e.message; toast(`${o.title}: ${e.message}`, 5000); }
+    finally {
+      BUSY--; j.done = true; j.phase = ''; renderJobs();
+      if (!j.fail && !j.onBtn) setTimeout(() => { const k = JOBS.indexOf(j); if (k >= 0) { JOBS.splice(k, 1); renderJobs(); } }, 15000);
+    }
+    return !j.fail;
+  })();
+  return j.promise;
+}
+const needOrient = cls => !cls.oriented && cls.pages.some(p => !p.oc && !p.skip) && !!(App.settings().apiKey || '').trim();
+function orientJob(cls) {
+  return bgJob({ key: 'orient:' + cls.id, title: `${cls.name} · 쪽 방향`, where: `#/k/${cls.id}/pages`, phase: '쪽 방향 확인 중…', run: async j => {
+    const n = await autoOrient(cls, m => { j.phase = m; renderJobs(); });
+    cls.oriented = true; save();
+    j.doneMsg = n ? `${n}쪽을 바로 세웠어요` : '모두 바른 방향이에요';
+    softRefresh(cls.id); if (location.hash === `#/k/${cls.id}/pages` && $('#modal').classList.contains('hide')) rerender();
+    if (n) toast(`${cls.name}: ${n}쪽의 방향을 바로 세웠어요. 틀린 쪽은 ↻ 로 돌리세요.${cls.masks.length ? ' 이름 칸 가리기 위치도 확인해 주세요.' : ''}`, 4500);
+  } });
+}
+// 시험지 형·정답표: 뒤에서 만들고, 다 되면 그 반을 보고 있으면 확인 창, 아니면 작업 칸의 '확인하기'
+function keyJob(task, cls, then) {
+  return bgJob({ key: 'key:' + cls.id, title: `${cls.name} · 정답표`, where: `#/k/${cls.id}`, phase: '시험지 형과 정답표 만드는 중… (30초 안팎)', run: async j => {
+    const oj = jobFor('orient:' + cls.id);
+    if (oj) { j.phase = '쪽 방향을 맞추는 중이라 기다려요…'; renderJobs(); await oj.promise; }
+    else if (needOrient(cls)) { j.phase = '쪽 방향 확인 중…'; renderJobs(); await autoOrient(cls, m => { j.phase = m; renderJobs(); }).catch(() => 0); cls.oriented = true; }
+    j.phase = '시험지 형과 정답표 만드는 중… (30초 안팎)'; renderJobs();
+    const t0 = Date.now(); await makeKeyFor(task, cls);
+    j.doneMsg = `${Math.round((Date.now() - t0) / 1000)}초 만에 만들었어요 — 확인해 주세요`;
+    if (then !== false) {
+      j.onBtn = () => { const k = JOBS.indexOf(j); if (k >= 0) JOBS.splice(k, 1); renderJobs(); keyModal(task, cls, then || (() => rerender())); };
+      j.btnLabel = '정답표 확인';
+      const here = location.hash.startsWith('#/k/' + cls.id) || location.hash.startsWith('#/g/' + cls.id + '/');
+      if (here && $('#modal').classList.contains('hide')) j.onBtn();
+      else toast(`${cls.name} 정답표를 만들었어요. 오른쪽 아래 '정답표 확인'을 눌러 주세요.`, 5000);
+    }
+  } });
 }
 async function runBatch(title, items, fn, opt = {}) {
   const j = { id: uid(), key: opt.key || title, title, total: items.length, ok: 0, fail: 0, log: [], done: false, stopped: false,
@@ -1898,6 +2097,25 @@ const ACT = {
     if (cls.starts.includes(i)) cls.starts = cls.starts.filter(x => x !== i); else cls.starts.push(i);
     rebuildSubs(cls); save(); rerender();
   },
+  pmove(el) {
+    const { cls } = gPages(); const to = Number($('#pmto').value) - 1;
+    if (!(to >= 0 && to < cls.pages.length)) { toast('옮길 쪽 번호를 적어 주세요.'); $('#pmto').focus(); return; }
+    const idx = cls.pages.map((p, i) => G.psel.has(p.id) ? i : -1).filter(i => i >= 0);
+    if (idx.includes(to)) { toast('고른 쪽이 아닌 쪽 번호를 적어 주세요.'); return; }
+    const hint = dropHint(cls, to, el.dataset.w === 'after');
+    if (movePages(cls, idx, to, el.dataset.w === 'after')) { G.psel.clear(); save(); rerender(); toast(`${idx.length}쪽 옮김 · ${hint.replace('붙이기', '붙였어요').replace('새 학생으로', '새 학생으로 넣었어요')}`); }
+  },
+  async prot(el) { const { cls } = gPages(); BUSY++; try { await rotatePages(cls, [Number(el.dataset.i)], 90); } finally { BUSY--; } rotDone(cls); },
+  async protsel(el) { const { cls } = gPages(); const idx = cls.pages.map((p, i) => G.psel.has(p.id) ? i : -1).filter(i => i >= 0); BUSY++; try { await rotatePages(cls, idx, Number(el.dataset.d)); } finally { BUSY--; } rotDone(cls, idx.length); },
+  async protall(el) { const { cls } = gPages(); toast('모든 쪽을 돌리는 중…', 1500); BUSY++; try { await rotatePages(cls, cls.pages.map((_, i) => i), Number(el.dataset.d)); } finally { BUSY--; } rotDone(cls, cls.pages.length); },
+  async autoorient(el) {
+    const { cls } = findClass(el.dataset.id);
+    if (!(App.settings().apiKey || '').trim()) { toast('설정에 API 키를 넣으면 방향을 자동으로 맞춰요.'); return; }
+    cls.pages.forEach(p => { p.oc = false; }); cls.oriented = false;
+    toast('오른쪽 아래에서 방향을 맞춰요. 그동안 다른 일을 해도 돼요.', 3000); orientJob(cls);
+  },
+  pskip() { const { cls } = gPages(); cls.pages.forEach(p => { if (G.psel.has(p.id)) p.skip = true; }); G.psel.clear(); rebuildSubs(cls); save(); rerender(); },
+  pclear() { G.psel.clear(); rerender(); },
   togskip(el) { const { cls } = gPages(); const p = cls.pages[Number(el.dataset.i)]; p.skip = !p.skip; rebuildSubs(cls); save(); rerender(); },
   togabsent(el) {
     const { cls } = gPages(); const no = Number(el.dataset.no); const s = stu(cls, no);
@@ -2013,6 +2231,7 @@ const ACT = {
     const p = JOBS[k].resume; JOBS.splice(k, 1); pendDel(p.key); renderJobs();
     ACT[p.kind === 'grade' ? 'batchgrade' : 'batchseteuk']({ dataset: { id: p.clsId } });
   },
+  jobbtn(el) { const j = JOBS.find(x => x.id === el.dataset.j); if (j && j.onBtn) j.onBtn(); },
   jobtoggle(el) { const j = JOBS.find(x => x.id === el.dataset.j); if (j) { j.open = !j.open; renderJobs(); } },
   strict(el) {
     const { task } = findTask(el.dataset.id); if (!task) return;
