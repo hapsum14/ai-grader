@@ -1663,7 +1663,7 @@ function keyModal(task, cls, then, form) {
         <div class="mapimg"><img id="mapimg" alt=""></div>` : '<p class="muted small">답안지가 없어요.</p>'}</div>
       <div class="mapright">
         <div class="row ${byForm ? 'hide' : ''}" style="gap:6px"><span class="small muted">시험지 형</span><input class="in" id="kform" value="${esc(formOf(cls))}" style="width:64px" placeholder="예: C"><span class="small faint">${others.length ? `같은 형: ${esc(others.join(', '))}` : '형이 같은 반은 이 정답표를 함께 써요'}</span></div>
-        <div class="sec-h" style="margin:12px 0 6px">문항별 정답 <span class="faint small" style="font-weight:400">AI 가 시험지를 풀어 만든 것 — 틀린 곳을 고쳐 주세요</span></div>
+        <div class="sec-h" style="margin:12px 0 6px">문항별 정답 <span class="faint small" style="font-weight:400">AI 가 시험지를 풀어 만든 것 — 틀린 곳을 고쳐 주세요</span><span class="sp"></span><button class="lnk" id="ktype" type="button" title="학생 4명의 답을 비교해 문항마다 정답 구조를 다시 정해요">${ic('bot')}유형 자동으로 정하기</button></div>
         <p class="small ${key.answers.some(a => a.type && a.type !== 'fixed') ? 'muted' : 'faint'}" style="margin:0 0 6px">${key.typed ? `학생 ${key.typed}명의 답을 비교해 문항 유형을 정했어요${key.answers.some(a => a.type && a.type !== 'fixed') ? ' — <b>학생 조건에 따라·열린 답</b> 문항은 정답 대신 규칙으로 판단해요. 맞는지 확인해 주세요.' : '. 모두 정답이 하나인 문항이에요.'}` : '문항마다 정답 구조를 고를 수 있어요(학생마다 조건이 달라 정답이 다르면 \'학생 조건에 따라\').'}</p>
         <div class="ktb" id="ktb">${key.answers.map(ansRow).join('')}</div><button class="btn sm ghost" id="kadd">+ 문항</button>
         <div class="sec-h" style="margin:14px 0 6px">채점 기준 ↔ 문항 <span class="sp"></span><button class="lnk" id="kord" type="button">문항 순서대로 1:1</button></div>
@@ -1694,6 +1694,11 @@ function keyModal(task, cls, then, form) {
     $$('#mbox [data-mi]').forEach(inp => { inp.value = tops[Number(inp.dataset.mi)]; }); collect(); key.map = 'order'; save(); toast('순서대로 맞췄어요.');
   };
   $('#kadd').onclick = () => { $('#ktb').insertAdjacentHTML('beforeend', ansRow({ no: '', answer: '' }, $$('#ktb .kr').length)); };
+  $('#ktype').onclick = async () => {
+    const b = $('#ktype'); collect(); b.disabled = true; b.textContent = '학생 답 비교 중…';
+    try { await classifyKey(task, key, sm ? sm.k : cls); save(); toast(`학생 ${key.typed || 0}명의 답을 비교해 유형을 정했어요.`); keyModal(task, cls, then, form); }
+    catch (e) { toast('유형을 정하지 못했어요: ' + e.message, 4500); b.disabled = false; b.textContent = '유형 자동으로 정하기'; }
+  };
   $('#ktb').onchange = e => { const t = e.target.closest('.kty'); if (!t) return; const r = t.closest('.kr'); const ru = $('.krule', r); ru.classList.toggle('hide', t.value === 'fixed'); t.classList.toggle('on', t.value !== 'fixed'); ru.placeholder = t.value === 'open' ? '꼭 들어갈 요소' : '판단 규칙: 학생이 적은 조건·관찰에서 결론을 어떻게 끌어내면 맞는지'; if (t.value !== 'fixed') ru.focus(); };
   $('#ktb').onclick = e => { const d = e.target.closest('[data-kdel]'); if (d) d.closest('.kr').remove(); };
   $('#kok').onclick = () => { collect(); (byForm ? key : (keyOf(task, cls) || key)).checked = true; save(); closeModal(true); if (then) then(); else { rerender(); toast('정답표를 확인했어요. 다음 AI 채점부터 적용돼요.'); } };
