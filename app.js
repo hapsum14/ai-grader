@@ -1201,7 +1201,7 @@ function keyModal(task, cls, then) {
   if (then) $('#kskip').onclick = () => { collect(); closeModal(true); then(); };
 }
 // 근거 확인: 인용이 학생 답에 실제로 있는지(띄어쓰기·문장부호 무시, 두 글자 묶음 70% 이상)
-function normTxt(t) { return String(t || '').replace(/[\s.,·:;'"“”‘’()\[\]{}!?~…⋯\-]/g, '').toLowerCase(); }
+function normTxt(t) { return String(t || '').normalize('NFKC').replace(/[\s.,·:;'"“”‘’()\[\]{}!?~…⋯\-]/g, '').toLowerCase(); }
 function found(q, all) {
   const a = normTxt(all), b = normTxt(q); if (!b) return true; if (a.includes(b)) return true;
   const bg = x => { const o = new Set(); for (let i = 0; i < x.length - 1; i++) o.add(x.slice(i, i + 2)); return o; };
