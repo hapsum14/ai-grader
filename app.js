@@ -401,7 +401,7 @@ function seteukInfo(task, s, cls, no) {
   L.push('문항별 최종 판단(교사 판단이 최종). 맞은 문항의 학생 답만 세특의 근거로 쓰고, 틀린 문항의 내용은 잘한 점으로 쓰지 않는다:\n' + rows.join('\n'));
   if (s.ai) {
     if (s.ai.transcript) L.push('학생 답안 전체(참고. 위에서 틀림인 문항의 내용은 쓰지 않는다):\n' + s.ai.transcript);
-    if (s.ai.observation && !changed) L.push('관찰 요약: ' + s.ai.observation);
+    if (s.ai.strengths && !changed) L.push('답안에서 드러난 강점·역량(AI 판단. 세특에서 학생 답 내용에 붙여 드러낸다): ' + s.ai.strengths);
     const ev = s.ai.criteria.filter(c => c.evidence && finalMet(task, s, c.index - 1)).map(c => `${c.index}번 기준 근거: ${c.evidence}`);
     if (ev.length) L.push(ev.join('\n'));
   }
@@ -411,7 +411,7 @@ function seteukInfo(task, s, cls, no) {
   // 채점 때 쓴 세특 초안: 맥락·흐름은 살리고 다듬는다(선생님이 판단을 바꿨으면 그 판단대로 고친다)
   if (s.ai && s.ai.observation) L.push(changed
     ? '채점 때 쓴 세특 초안(AI 판단 기준). 이 글의 맥락·흐름·구체적 내용은 살리되, 교사가 틀림으로 바꾼 문항의 내용은 빼고 교사가 맞음으로 바꾼 문항의 내용은 학생 답에서 더해 고쳐 쓴다:\n' + s.ai.observation
-    : '채점 때 쓴 세특 초안. 이 글의 맥락·흐름·구체적 내용을 그대로 살려, 분량과 세특 규칙에 맞게만 다듬는다(새 내용을 지어내지 않음):\n' + s.ai.observation);
+    : '채점 때 쓴 세특 초안. 이 글의 맥락·흐름·구체적 내용과 역량 서술(드러냄·돋보임 등)을 그대로 살려, 분량과 세특 규칙에 맞게만 다듬는다(새 내용을 지어내지 않음):\n' + s.ai.observation);
   if (s.memo) L.push('교사 관찰 메모(중요): ' + s.memo);
   return L.join('\n');
 }
@@ -1952,7 +1952,7 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   });
   const s = stu(cls, no);
   const before = task.criteria.map((c, i) => finalMet(task, s, i)).join(); // 이전 최종 판단(손대지 않았으면 이전 AI 판단)
-  s.ai = { transcript: answers.map(a => `${a.no}. ${a.text}`).join('\n'), answers, criteria: crit, feedback: j1.feedback || '', observation: j1.observation || '', obsQuotes: j1.obsQuotes || [],
+  s.ai = { transcript: answers.map(a => `${a.no}. ${a.text}`).join('\n'), answers, criteria: crit, feedback: j1.feedback || '', observation: j1.observation || '', obsQuotes: j1.obsQuotes || [], strengths: j1.strengths || '',
     blank: !!extra.blank, unreadable: !!extra.unreadable, at: Date.now(), model: AI.isMock() ? '모의' : P.judge.model, strict: task.strict || '보통', form: stuForm(cls, no) };
   if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
   if (s.seteuk && before !== task.criteria.map((c, i) => finalMet(task, s, i)).join()) s.seteukStale = true;
