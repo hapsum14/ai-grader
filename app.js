@@ -530,9 +530,9 @@ function renderSide() {
     const tasks = cOpen ? c.tasks.map(t => {
       const tCur = ctx.task === t;
       const tOpen = isOpen(t.id, tCur);
-      const cls = tOpen ? t.classes.map(k => `<a class="subj l2 ${ctx.cls === k ? 'on' : ''}" href="#/k/${k.id}"><span class="nm">${esc(k.name)}</span><b>${doneCount(k)}/${k.size}</b></a>`).join('') + `<button class="subj l2 addk2" data-act="addclass" data-id="${t.id}">+ 반 추가</button>` : '';
+      const cls = tOpen ? t.classes.map(k => `<a class="subj l2 ${ctx.cls === k ? 'on' : ''}" href="#/k/${k.id}"><span class="nm">${esc(k.name)}</span><b>${doneCount(k)}/${k.size}</b></a>`).join('') : '';
       const tOn = tCur && !ctx.cls;
-      return `<div class="trow l1">${chev(t.id, tOpen, true)}<a class="subj ${tOn ? 'on' : ''}" href="#/t/${t.id}" data-tree="${t.id}" title="채점 기준 · 지금 보는 곳을 한 번 더 누르면 접기/펴기"><span class="nm">${esc(t.name)}</span><b>${t.classes.length ? t.classes.length + '반' : ''}</b></a></div>${cls}`;
+      return `<div class="trow l1">${chev(t.id, tOpen, t.classes.length > 0)}<a class="subj ${tOn ? 'on' : ''}" href="#/t/${t.id}" data-tree="${t.id}" title="채점 기준 · 지금 보는 곳을 한 번 더 누르면 접기/펴기"><span class="nm">${esc(t.name)}</span><b>${t.classes.length ? t.classes.length + '반' : ''}</b></a></div>${cls}`;
     }).join('') : '';
     const cOn = ctx.kind === 'c' && cCur;
     return `<div class="trow">${chev(c.id, cOpen, c.tasks.length)}<a class="subj ${cOn ? 'on' : ''}" href="#/c/${c.id}" data-tree="${c.id}">${ic('book')}<span class="nm">${esc(c.name)}</span><b>${c.tasks.length}</b></a></div>${tasks}`;
@@ -666,16 +666,10 @@ function taskCard(t) {
         <a class="ibtn" href="#/t/${t.id}" title="채점 기준 보기·고치기">${ic('task')}</a>
         <button class="ibtn" data-act="copytask" data-id="${t.id}" data-stay="1" title="복사해서 하나 더">${ic('copy')}</button>
         <button class="ibtn del" data-act="deltask" data-id="${t.id}" data-stay="1" title="수행평가 지우기">${ic('trash')}</button>
-      <details class="menu"><summary class="ibtn" title="더 보기">${ic('more')}</summary><div class="mlist">
-        <a href="#/t/${t.id}">${ic('task')}채점 기준 보기·고치기</a>
-        <button data-act="renametask" data-id="${t.id}">${ic('pen')}이름 바꾸기</button>
-        <button data-act="copytask" data-id="${t.id}" data-stay="1">${ic('copy')}복사해서 하나 더</button>
-        ${partsOf(t) && !t.classes.length ? `<button data-act="splittask" data-id="${t.id}" data-stay="1">${ic('more')}평가 요소별로 나누기</button>` : ''}
-        ${!t.classes.length ? `<button data-act="mergetask" data-id="${t.id}">${ic('copy')}다른 수행평가와 합치기</button>` : ''}
-        <button data-act="addclass" data-id="${t.id}">${ic('plus')}반 추가</button>
-        <button class="danger" data-act="deltask" data-id="${t.id}" data-stay="1">${ic('trash')}수행평가 지우기</button></div></details></div></div>
-    ${ks || '<div class="tk-empty">답안을 올릴 반을 추가하세요</div>'}
-    <button class="addk" data-act="addclass" data-id="${t.id}">+ 반 추가</button></div>`;
+      ${!t.classes.length ? `<details class="menu"><summary class="ibtn" title="나누기·합치기">${ic('more')}</summary><div class="mlist">
+        ${partsOf(t) ? `<button data-act="splittask" data-id="${t.id}" data-stay="1">${ic('more')}평가 요소별로 나누기</button>` : ''}
+        <button data-act="mergetask" data-id="${t.id}">${ic('copy')}다른 수행평가와 합치기</button></div></details>` : ''}</div></div>
+    ${ks ? `${ks}<button class="addk" data-act="addclass" data-id="${t.id}">+ 반 추가</button>` : `<button class="addk first" data-act="addclass" data-id="${t.id}">${ic('plus')}반 추가 — 답안 PDF 올리기</button>`}</div>`;
 }
 
 async function startPlan(src) {
@@ -870,12 +864,13 @@ function vCourse(cid) {
   const meta = courseMeta(c);
   return `
   <div class="phead"><div class="pt"><h1>${esc(c.name)}</h1><div class="sub">${esc(meta)}</div></div>
-    <details class="menu"><summary class="btn">${ic('more')}</summary><div class="mlist">
-      <button data-act="renamecourse" data-id="${c.id}">${ic('pen')}이름 바꾸기</button>
-      ${c.planText ? `<button data-act="showplan" data-id="${c.id}">${ic('task')}계획서 글 보기</button>` : ''}
-      <button data-act="addtask" data-id="${c.id}">${ic('plus')}수행평가 직접 추가</button>
-      ${c.tasks.filter(canMerge).length > 1 ? `<button data-act="mergeask" data-id="${c.id}">${ic('copy')}수행평가 합치기</button>` : ''}
-      ${c.tasks.some(t => partsOf(t) && !t.classes.length) ? `<button data-act="splitask" data-id="${c.id}">${ic('more')}평가 요소별로 나누기</button>` : ''}
+    <details class="menu"><summary class="btn" title="더 보기">${ic('more')}</summary><div class="mlist">
+      ${c.tasks.filter(canMerge).length > 1 || c.tasks.some(t => partsOf(t) && !t.classes.length) ? '<div class="mcap">수행평가</div>' : ''}
+      ${c.tasks.filter(canMerge).length > 1 ? `<button data-act="mergeask" data-id="${c.id}">${ic('copy')}수행평가 합치기…</button>` : ''}
+      ${c.tasks.some(t => partsOf(t) && !t.classes.length) ? `<button data-act="splitask" data-id="${c.id}">${ic('more')}평가 요소별로 나누기…</button>` : ''}
+      <div class="mcap">과목</div>
+      <button data-act="renamecourse" data-id="${c.id}">${ic('pen')}과목 이름 바꾸기</button>
+      ${c.planText ? `<button data-act="showplan" data-id="${c.id}">${ic('task')}평가계획서 글 보기</button>` : ''}
       <button class="danger" data-act="delcourse" data-id="${c.id}">${ic('trash')}과목 지우기</button></div></details></div>
   <div class="tks">${c.tasks.map(t => taskCard(t)).join('')}<button class="tk tk-add" data-act="addtask" data-id="${c.id}">${ic('plus')}<b>수행평가 추가</b><span>빈 채점 기준으로 새로 만들기</span></button></div>
   ${names.length ? `<div class="sec-h" style="margin-top:22px">${ICON.grad}반별 세특 모아보기</div>
@@ -1071,16 +1066,20 @@ function vPages(kid) {
       <div><label class="f">학생 수</label><input class="in num" type="number" id="psize" value="${cls.size}"></div>
       <div><label class="f">학생당 쪽 수</label><input class="in num" type="number" id="pper" value="${cls.perStudent}"></div>
       <button class="btn" data-act="resplit" data-id="${cls.id}">이대로 다시 나누기</button>
-      <button class="btn" data-act="morefiles" data-id="${cls.id}">${ICON.up}파일 더 올리기</button>
-      <button class="btn" data-act="replacefiles" data-id="${cls.id}" title="지금 그림을 모두 빼고 새 파일로 바꿔요">${ICON.up}파일 바꾸기</button>
       <button class="btn soft" data-act="masks" data-id="${cls.id}">${ICON.img}이름 칸 가리기 ${cls.masks.length ? `(${cls.masks.length}곳)` : '(아직 없음)'}</button>
+      <span class="sp"></span>
+      <details class="menu"><summary class="btn" title="파일·지우기">${ic('more')}</summary><div class="mlist">
+        <div class="mcap">파일</div>
+        <button data-act="morefiles" data-id="${cls.id}">${ICON.up}파일 더 올리기</button>
+        <button data-act="replacefiles" data-id="${cls.id}">${ICON.up}파일 바꾸기(지금 그림 빼고 새로)</button>
+        <div class="mcap">지우기</div>
+        <button data-act="pdelall" data-id="${cls.id}">${ic('trash')}그림 모두 지우기(채점 기록은 남음)</button>
+        <button class="danger" data-act="delclass" data-id="${cls.id}">${ic('trash')}반 지우기</button></div></details>
     </div>
     <div class="row orow"><span class="small muted">쪽 방향</span>
       <button class="btn sm" data-act="autoorient" data-id="${cls.id}" title="AI 가 자리마다 2~3쪽을 보고 방향을 맞춰요(작게 줄여 보내 이름은 읽히지 않아요)">${ic('bot')}자동으로 맞추기</button>
       <span class="small faint">전체</span><button class="btn sm" data-act="protall" data-d="270">↺ 왼쪽</button><button class="btn sm" data-act="protall" data-d="90">↻ 오른쪽</button><button class="btn sm" data-act="protall" data-d="180">180°</button>
       <span class="small faint">한 쪽만은 쪽의 ↻, 여러 쪽은 골라서 돌려요</span>
-      <button class="btn sm ghost" data-act="pdelall" data-id="${cls.id}" style="margin-left:auto" title="답안 그림만 모두 지워요(채점 기록은 남음)">${ic('trash')}그림 모두 지우기</button>
-      <button class="btn sm danger" data-act="delclass" data-id="${cls.id}">반 지우기</button>
     </div>
     <label class="f" style="margin-top:14px">미응시 번호 <span class="faint">— 누르면 그 번호를 건너뛰어요</span></label>
     <div class="row" style="gap:6px">${nos.map(n => `<button class="chip ${absent.includes(n) ? 'gray on' : 'gray'}" data-act="togabsent" data-no="${n}">${n}</button>`).join('')}</div>
@@ -1252,6 +1251,7 @@ function vClass(kid) {
   return `
   <div class="phead">
     <div class="pt"><h1>${esc(cls.name)}</h1><div class="sub">${esc(task.name)} · ${task.maxScore}점${avg ? ` · 평균 ${avg}점` : ''}
+      · <a class="lnk" href="#/t/${task.id}" title="채점 기준 보기·고치기">채점 기준</a>
       · <button class="lnk" data-act="keyview" data-id="${cls.id}" title="문항별 정답과 채점 기준 ↔ 문항">${keyOf(task, cls) ? `${formOf(cls) ? esc(formOf(cls)) + '형 ' : ''}정답표${keyOf(task, cls).checked ? '' : ' <span class="pill ai">확인 필요</span>'}` : '정답표 만들기'}</button>${Object.entries(task.keys || {}).filter(([f, k]) => k.sample && k.sample.k === cls.id && f !== formOf(cls)).map(([f, k]) => ` · <button class="lnk" data-act="keyview" data-id="${cls.id}" data-f="${esc(f)}">${f ? esc(f) + '형' : '다른 시험지'} 정답표${k.checked ? '' : ' <span class="pill ai">확인 필요</span>'}</button>`).join('')}</div></div>
     ${nextTodo ? `<a class="btn primary lg" href="#/g/${cls.id}/${nextTodo}">${ic('play')}${statusOf(cls, nextTodo) === 'AI 채점' ? '확인' : '채점'} 이어 하기 · ${nextTodo}번</a>`
       : `<a class="btn lg" href="#/g/${cls.id}/1">${ic('check')}채점 끝 · 다시 보기</a>`}
@@ -1272,13 +1272,14 @@ function vClass(kid) {
     <span class="sp"></span>
     ${!cls.masks.length ? `<a class="warnchip" href="#/k/${cls.id}/pages" title="AI 로 보내기 전에 학번·이름 칸을 가리세요">${ic('eye')}이름 가리기 필요</a>` : ''}
     <details class="menu"><summary class="btn" title="더 보기">${ic('more')}</summary><div class="mlist">
+      <div class="mcap">답안</div>
       <a href="#/k/${cls.id}/pages">${ICON.img}답안 나누기 · 이름 가리기</a>
-      <a href="#/t/${task.id}">${ic('task')}채점 기준</a>
-      <button data-act="keyview" data-id="${cls.id}">${ICON.img}정답표 · 문항 맞추기</button>
-      <button data-act="regrade" data-id="${cls.id}">${ic('bot')}AI 채점 다시…</button>
-      <button data-act="reseteuk" data-id="${cls.id}">${ICON.wand}세특 다시 쓰기…</button>
+      ${n['채점 전'] ? `<button data-act="regrade" data-id="${cls.id}">${ic('bot')}이미 채점한 학생 다시 채점…</button>` : ''}
+      ${canSet ? `<button data-act="reseteuk" data-id="${cls.id}">${ICON.wand}이미 쓴 세특 다시 쓰기…</button>` : ''}
+      <div class="mcap">내보내기</div>
       <button data-act="copyall" data-id="${cls.id}">${ic('copy')}세특 모두 복사</button>
       <button data-act="xlsx" data-id="${cls.id}">${ic('down')}엑셀로 내보내기</button>
+      <div class="mcap">반</div>
       <button data-act="renameclass" data-id="${cls.id}">${ic('pen')}반 이름 바꾸기</button>
       <button class="danger" data-act="delclass" data-id="${cls.id}">${ic('trash')}반 지우기</button></div></details>
   </div>

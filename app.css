@@ -700,3 +700,15 @@ details.aid[open]>summary{margin-bottom:10px}
 #utoast button{border:0;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:700;border-radius:999px;padding:5px 12px;cursor:pointer}
 #utoast button.x{background:none;color:inherit;opacity:.6;padding:5px 6px}
 @media (max-width:600px){ .navbtns .hbtn[data-act=navback], .navbtns .hbtn[data-act=navfwd]{display:none} }
+
+/* 메뉴 묶음 이름 */
+.mlist .mcap{font-size:11.5px;font-weight:700;color:var(--faint);padding:8px 10px 3px;letter-spacing:.02em}
+.mlist .mcap:first-child{padding-top:4px}
+.mlist .mcap+*{margin-top:0}
+.mlist .mcap:not(:first-child){border-top:1px solid var(--line);margin-top:4px}
+.mlist{min-width:250px}
+.mlist a,.mlist button{white-space:nowrap}
+
+.addk.first{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:12px;border:1.5px dashed var(--line2);border-radius:10px;background:none;color:var(--accent);font-weight:600}
+.addk.first:hover{background:var(--accent-soft);border-color:var(--accent)}
+.addk.first .ic{width:15px;height:15px}
