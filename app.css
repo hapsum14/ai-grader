@@ -837,3 +837,13 @@ body.grading #appfoot{display:none}
 .qtag[data-act=gotoq]{cursor:pointer}
 .qtag[data-act=gotoq]:hover{background:var(--accent);color:var(--accent-ink)}
 body.grading #tcredit{display:none}
+
+/* 도움말: 한 화면 2×2 카드 */
+#modal .box.helpbox{width:min(720px,100%)}
+.help2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.help2 section{border:1px solid var(--line);border-radius:12px;padding:12px 14px 10px;background:var(--card)}
+.help2 section.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.help2 h3{margin:0 0 6px;font-size:14px;color:var(--accent)}
+.help2 ol,.help2 ul{margin:0;padding-left:18px;font-size:13.5px;line-height:1.75}
+.help2 .kgrid{display:grid;grid-template-columns:auto 1fr;gap:5px 10px;font-size:13px;align-items:center}
+@media (max-width:600px){ .help2{grid-template-columns:1fr} }

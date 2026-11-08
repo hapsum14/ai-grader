@@ -2353,36 +2353,35 @@ function renderQuota() {
 /* ================= 도움말 ================= */
 const HELP = [
   ['start', '시작하기', `<ol class="hsteps">
-    <li><b>설정</b>에 Gemini API 키 넣기 <a href="${KEY_URL}" target="_blank" rel="noopener">무료 발급 ↗</a></li>
-    <li><b>평가계획서 올리기</b> → 채점 기준이 정리됨</li>
-    <li>수행평가 카드의 <b>반 추가</b> → 답안 PDF 올리기</li>
-    <li><b>이름 칸 가리기</b> → <b>AI 채점</b> (세특도 함께 써짐)</li>
-    <li>학생마다 확인하고 <b>채점 완료</b> → 세특 복사·엑셀</li></ol>`],
+    <li><b>⚙ 설정</b>에 API 키 넣기 <a href="${KEY_URL}" target="_blank" rel="noopener">무료 발급 ↗</a></li>
+    <li><b>평가계획서</b> 올리기</li>
+    <li><b>반 추가</b> → 답안 PDF</li>
+    <li><b>이름 가리기</b> → <b>AI 채점</b></li>
+    <li>확인 → <b>채점 완료</b> → 세특 복사</li></ol>`],
   ['grade', '채점·세특', `<ul>
-    <li><b>정답표</b>: 첫 AI 채점 때 만들어져요. 한 번 확인하면 같은 형 반에 모두 쓰여요.</li>
-    <li><b>채점 방향 메모</b>: 채점 기준 화면에 적으면 AI 가 가장 먼저 따라요.</li>
-    <li><b>선생님 판단이 최종</b>: 체크를 바꾸고 채점 완료를 누르면 세특도 그대로 다시 써요.</li>
-    <li><b>잘못 읽었을 때</b>: 'AI 가 읽은 글'에서 고치고 <b>다시 판단</b>.</li></ul>`],
+    <li><b>채점 방향 메모</b> — AI 가 가장 먼저 따라요</li>
+    <li><b>체크 바꾸기</b> — 점수·세특이 선생님 판단대로</li>
+    <li><b>관찰 메모</b> — 적은 역량은 세특에 꼭 들어가요</li>
+    <li><b>정답표</b> — 채점 화면 왼쪽 탭에서 보기</li></ul>`],
   ['pages', '답안 나누기', `<ul>
-    <li>쪽을 <b>끌어서</b> 옮기기 — 여러 쪽은 네모(Ctrl·Shift)로 골라서.</li>
-    <li>쪽의 <b>오른쪽</b>에 놓으면 그 학생에, 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생으로.</li>
-    <li>방향은 <b>↻</b>, 파일 바꾸기·지우기는 <b>⋯</b>.</li></ul>`],
+    <li>쪽을 <b>끌어서</b> 옮기기</li>
+    <li>쪽 <b>오른쪽</b>에 놓기 = 그 학생에 붙이기</li>
+    <li>첫 쪽 <b>왼쪽</b>에 놓기 = 새 학생</li>
+    <li><b>↻</b> 돌리기 · <b>⋯</b> 파일 바꾸기·지우기</li></ul>`],
   ['keys', '단축키', `<div class="kgrid">
     <span><span class="kbd">←</span><span class="kbd">→</span></span><span>이전·다음 학생</span>
     <span><span class="kbd">1</span>~<span class="kbd">9</span></span><span>기준 체크</span>
-    <span><span class="kbd">Ctrl</span>+<span class="kbd">Enter</span></span><span>채점 완료 후 다음</span>
-    <span><span class="kbd">Ctrl</span>+<span class="kbd">Z</span></span><span>되돌리기</span>
-    <span><span class="kbd">/</span></span><span>찾기</span></div>
-    <p class="small muted" style="margin-top:12px">기록은 이 브라우저에 저장돼요. 구글 로그인하면 다른 컴퓨터에서도 이어 할 수 있어요.</p>`],
+    <span><span class="kbd">Ctrl</span><span class="kbd">Enter</span></span><span>완료 후 다음</span>
+    <span><span class="kbd">Ctrl</span><span class="kbd">Z</span></span><span>되돌리기</span>
+    <span><span class="kbd">/</span></span><span>찾기</span></div>`],
 ];
 
 function helpModal(sec) {
-  modal(`<h2>도움말</h2>
-    <div class="row" style="gap:6px;margin-bottom:12px">${HELP.map(h => `<button class="chip ${h[0] === sec ? 'on' : ''}" data-hsec="${h[0]}">${esc(h[1])}</button>`).join('')}</div>
-    <div class="help">${HELP.map(h => `<section id="h-${h[0]}"><h3>${esc(h[1])}</h3>${h[2]}</section>`).join('')}</div>
-    <div class="foot"><button class="btn" data-act="close">닫기</button></div>`, true);
-  $$('[data-hsec]').forEach(b => b.onclick = () => { $$('[data-hsec]').forEach(x => x.classList.toggle('on', x === b)); $('#h-' + b.dataset.hsec).scrollIntoView({ behavior: 'smooth', block: 'start' }); });
-  if (sec) setTimeout(() => { const el = $('#h-' + sec); if (el) el.scrollIntoView({ block: 'start' }); }, 30);
+  modal(`<h2 style="margin-bottom:12px">도움말</h2>
+    <div class="help2">${HELP.map(h => `<section id="h-${h[0]}" class="${h[0] === sec ? 'on' : ''}"><h3>${esc(h[1])}</h3>${h[2]}</section>`).join('')}</div>
+    <p class="small faint" style="margin:12px 0 0">기록은 이 브라우저에 저장돼요. 구글 로그인하면 다른 컴퓨터에서도 이어 해요.</p>
+    <div class="foot"><button class="btn primary" data-act="close">알겠어요</button></div>`);
+  $('#mbox').classList.add('helpbox');
 }
 
 /* ================= 엑셀 ================= */
