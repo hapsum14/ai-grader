@@ -351,11 +351,31 @@ function courseMeta(c) {
 function treeOpen() { try { return JSON.parse(localStorage.getItem('aigrader-tree') || '{}'); } catch (e) { return {}; } }
 function matchQ(...texts) { const q = F.q.trim().toLowerCase(); if (!q) return true; return texts.some(t => String(t || '').toLowerCase().includes(q)); }
 
+// 왼쪽 메뉴 펼치기/접기(누를 때마다 바뀜)
+function toggleTree(id) {
+  const o = treeOpen(), ctx = curCtx();
+  const cur = (ctx.course && ctx.course.id === id) || (ctx.task && ctx.task.id === id);
+  const now = typeof o[id] === 'boolean' ? o[id] : !!cur;
+  o[id] = !now; try { localStorage.setItem('aigrader-tree', JSON.stringify(o)); } catch (e) {}
+  renderSide();
+}
+// 지금 보고 있는 과목·수행평가 이름을 다시 누르면 접고 편다
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('#side a[data-tree]');
+  if (!a || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (location.hash === a.getAttribute('href')) { e.preventDefault(); toggleTree(a.dataset.tree); }
+});
 function renderSide() {
   const ctx = curCtx(), open = sideOpen();
   const nStu = sum(S.courses.flatMap(c => c.tasks.flatMap(t => t.classes.map(k => k.size))));
   const to = treeOpen();
-  const isOpen = (id, cur) => cur || to[id] === true;
+  const curKey = [ctx.course && ctx.course.id, ctx.task && ctx.task.id].join('|');
+  if (curKey !== renderSide.last) { // 새로 들어간 과목·수행평가는 펼쳐 보여 준다
+    renderSide.last = curKey;
+    [ctx.course, ctx.task].forEach(x => { if (x) to[x.id] = true; });
+    try { localStorage.setItem('aigrader-tree', JSON.stringify(to)); } catch (e) {}
+  }
+  const isOpen = (id, cur) => typeof to[id] === 'boolean' ? to[id] : cur;
   const chev = (id, open, has) => has ? `<button class="tg ${open ? 'open' : ''}" data-act="tree" data-id="${id}" title="${open ? '접기' : '펴기'}">${ic('chev')}</button>` : '<span class="tg"></span>';
   const tree = S.courses.map(c => {
     const cCur = ctx.course === c;
@@ -365,10 +385,10 @@ function renderSide() {
       const tOpen = isOpen(t.id, tCur);
       const cls = tOpen ? t.classes.map(k => `<a class="subj l2 ${ctx.cls === k ? 'on' : ''}" href="#/k/${k.id}"><span class="nm">${esc(k.name)}</span><b>${doneCount(k)}/${k.size}</b></a>`).join('') + `<button class="subj l2 addk2" data-act="addclass" data-id="${t.id}">+ 반 추가</button>` : '';
       const tOn = tCur && !ctx.cls;
-      return `<div class="trow l1">${chev(t.id, tOpen, true)}<a class="subj ${tOn ? 'on' : ''}" href="#/t/${t.id}" title="채점 기준"><span class="nm">${esc(t.name)}</span><b>${t.classes.length ? t.classes.length + '반' : ''}</b></a></div>${cls}`;
+      return `<div class="trow l1">${chev(t.id, tOpen, true)}<a class="subj ${tOn ? 'on' : ''}" href="#/t/${t.id}" data-tree="${t.id}" title="채점 기준 · 지금 보는 곳을 한 번 더 누르면 접기/펴기"><span class="nm">${esc(t.name)}</span><b>${t.classes.length ? t.classes.length + '반' : ''}</b></a></div>${cls}`;
     }).join('') : '';
     const cOn = ctx.kind === 'c' && cCur;
-    return `<div class="trow">${chev(c.id, cOpen, c.tasks.length)}<a class="subj ${cOn ? 'on' : ''}" href="#/c/${c.id}">${ic('book')}<span class="nm">${esc(c.name)}</span><b>${c.tasks.length}</b></a></div>${tasks}`;
+    return `<div class="trow">${chev(c.id, cOpen, c.tasks.length)}<a class="subj ${cOn ? 'on' : ''}" href="#/c/${c.id}" data-tree="${c.id}">${ic('book')}<span class="nm">${esc(c.name)}</span><b>${c.tasks.length}</b></a></div>${tasks}`;
   }).join('');
   const cls = ctx.cls;
   const cnt = cls ? classCounts(cls) : null;
@@ -2021,12 +2041,7 @@ const ACT = {
     location.hash = '#/t/' + c.id;
   },
   tree(el) {
-    const o = treeOpen(); const ctx = curCtx(); const id = el.dataset.id;
-    const cur = (ctx.course && ctx.course.id === id) || (ctx.task && ctx.task.id === id);
-    const now = cur || o[id] === true;
-    if (cur && now) { toast('지금 보는 곳이라 펼쳐 둬요.', 1800); return; }
-    o[id] = !now; try { localStorage.setItem('aigrader-tree', JSON.stringify(o)); } catch (e) {}
-    renderSide();
+    toggleTree(el.dataset.id);
   },
   renametask(el) { startRename(el.dataset.id); },
   mergetask(el) { const { course } = findTask(el.dataset.id); mergeAsk(course, el.dataset.id); },

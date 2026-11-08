@@ -571,3 +571,8 @@ details.aid[open]>summary{margin-bottom:10px}
 .mg{display:grid;gap:6px;max-height:46vh;overflow:auto}
 .opt.dis{opacity:.5}
 .tk-h>.tk-tools{flex:none}
+
+/* 접기 단추를 누르기 쉽게 */
+.tg{width:26px;height:30px;cursor:pointer}
+.tg .ic{width:14px;height:14px}
+.trow.l1{padding-left:10px}
