@@ -850,7 +850,7 @@ function firstTodo(cls) {
 }
 
 /* ================= 채점 화면 ================= */
-const G = { page: 0, zoom: 1, rot: 0, tab: 'img', showMask: false, why: false, aiOpen: false, navIds: null, navKid: '' };
+const G = { page: 0, zoom: 1, rot: 0, tab: 'img', showMask: false, why: false, aiOpen: false, openQ: null, addMark: null, navIds: null, navKid: '' };
 // 이전/다음 학생: 반 화면에서 보던 목록(상태 거르기·정렬) 순서. 지금 학생이 목록에서 빠졌어도 그 자리에서 이어 간다
 function navStep(task, cls, no, d) {
   const ids = G.navKid === cls.id && G.navIds ? G.navIds : listNos(task, cls);
@@ -860,12 +860,87 @@ function navStep(task, cls, no, d) {
   return [...ids].reverse().find(x => x < no) || null;
 }
 let gctx = null;
+/* ---- 문항 표시(○ △ ✕): AI 가 문항 번호 자리와 짧은 이유를 주고, 선생님이 고치고·옮기고·더한다 ---- */
+const QM = { O: '○', '△': '△', X: '✕' };
+function normMark(m) { m = String(m || '').trim().toUpperCase(); if (/^(O|○|0|맞)/.test(m)) return 'O'; if (/^(△|▲|부분)/.test(m)) return '△'; return 'X'; }
+function qmarksFrom(r) {
+  const n01 = v => (v === '' || v == null || isNaN(v)) ? null : Math.min(1, Math.max(0, Number(v) / 1000));
+  return (r.questions || []).map(q => ({ no: String(q.no || '').replace(/[.번\s]/g, ''), mark: normMark(q.mark), reason: String(q.reason || ''),
+    page: Math.max(0, (Number(q.page) || 1) - 1), x: n01(q.x), y: n01(q.y) }));
+}
+function qmarkSvg(m) {
+  if (m === 'O') return '<svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="15"/></svg>';
+  if (m === '△') return '<svg viewBox="0 0 40 40"><path d="M20 4.5L36.5 34H3.5z"/></svg>';
+  return '<svg viewBox="0 0 40 40"><path d="M7 7L33 33M33 7L7 33"/></svg>';
+}
+function qstripHTML(s) {
+  const qs = s.qmarks || []; if (!qs.length) return '';
+  return `<div class="qstrip">${qs.map((q, i) => `<button class="qchip q${q.mark === '△' ? 'T' : q.mark}" data-act="qopen" data-i="${i}" title="${q.x == null ? '눌러서 답안지에 자리 정하기' : '눌러서 보기·고치기'}"><b>${esc(q.no)}</b><span class="qm">${QM[q.mark]}</span><span class="qr">${esc(q.reason) || '<i>이유 없음</i>'}</span></button>`).join('')}</div>`;
+}
+function bindQMarks(s) {
+  const wrap = $('#vwrap'); if (!wrap) return;
+  $$('.qmk,.qpop', wrap).forEach(e => e.remove());
+  wrap.classList.toggle('placing', G.addMark != null);
+  // 자리 정하기·더하기: 답안지를 누른 곳에 표시를 둔다
+  wrap.onclick = e => {
+    if (G.addMark == null || e.target.closest('.qmk,.qpop')) return;
+    const r = wrap.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    s.qmarks = s.qmarks || [];
+    let i = G.addMark;
+    if (i === -1) { const nos = s.qmarks.map(q => parseInt(q.no) || 0); s.qmarks.push({ no: String((Math.max(0, ...nos) || 0) + 1), mark: 'X', reason: '', page: G.page, x, y }); i = s.qmarks.length - 1; }
+    else Object.assign(s.qmarks[i], { page: G.page, x, y });
+    s.qmarksEdited = true; G.addMark = null; G.openQ = i; save(); rerender();
+  };
+  if (G.rot) return; // 돌려 볼 때는 자리가 맞지 않아 표시를 숨김(위쪽 문항 줄로 보기)
+  (s.qmarks || []).forEach((q, i) => {
+    if (q.page !== G.page || q.x == null || q.y == null) return;
+    const d = document.createElement('button'); d.className = 'qmk q' + (q.mark === '△' ? 'T' : q.mark);
+    Object.assign(d.style, { left: q.x * 100 + '%', top: q.y * 100 + '%' });
+    d.innerHTML = qmarkSvg(q.mark); d.title = `${q.no}번 ${q.reason}`;
+    // 짧게 누르면 열기, 끌면 옮기기
+    d.onpointerdown = e => {
+      e.preventDefault(); e.stopPropagation(); d.setPointerCapture(e.pointerId);
+      const r = wrap.getBoundingClientRect(); const sx = e.clientX, sy = e.clientY; let moved = false;
+      d.onpointermove = ev => {
+        if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return; moved = true;
+        Object.assign(d.style, { left: Math.min(100, Math.max(0, (ev.clientX - r.left) / r.width * 100)) + '%', top: Math.min(100, Math.max(0, (ev.clientY - r.top) / r.height * 100)) + '%' });
+      };
+      d.onpointerup = ev => {
+        d.onpointermove = d.onpointerup = null;
+        if (moved) { q.x = parseFloat(d.style.left) / 100; q.y = parseFloat(d.style.top) / 100; s.qmarksEdited = true; save(); }
+        else { G.openQ = G.openQ === i ? null : i; bindQMarks(s); }
+      };
+    };
+    d.onclick = e => e.stopPropagation();
+    wrap.appendChild(d);
+  });
+  if (G.openQ != null && s.qmarks && s.qmarks[G.openQ] && s.qmarks[G.openQ].page === G.page && s.qmarks[G.openQ].x != null) openQPop(s, G.openQ);
+}
+function openQPop(s, i) {
+  const wrap = $('#vwrap'); const q = s.qmarks[i];
+  const p = document.createElement('div'); p.className = 'qpop';
+  Object.assign(p.style, { left: Math.min(q.x * 100, 70) + '%', top: q.y * 100 + '%' });
+  p.innerHTML = `<div class="row" style="gap:6px;flex-wrap:nowrap"><input class="in qno" value="${esc(q.no)}" title="문항 번호"><span class="small">번</span>
+      <span class="seg sm">${['O', '△', 'X'].map(m => `<button data-m="${m}" class="${q.mark === m ? 'on' : ''}">${QM[m]}</button>`).join('')}</span><span class="sp"></span>
+      <button class="ibtn" data-q="del" title="표시 지우기">${ic('trash')}</button><button class="ibtn" data-q="close" title="닫기">✕</button></div>
+    <textarea class="in" rows="2" placeholder="이유 (예: 답안 미기재)">${esc(q.reason)}</textarea>`;
+  const touch = () => { s.qmarksEdited = true; save(); };
+  p.onclick = e => e.stopPropagation();
+  p.onpointerdown = e => e.stopPropagation();
+  $('.qno', p).oninput = e => { q.no = e.target.value.trim(); touch(); };
+  $('textarea', p).oninput = e => { q.reason = e.target.value; touch(); };
+  $$('[data-m]', p).forEach(b => b.onclick = () => { q.mark = b.dataset.m; touch(); G.openQ = i; rerender(); });
+  $('[data-q="del"]', p).onclick = () => { s.qmarks.splice(i, 1); touch(); G.openQ = null; rerender(); };
+  $('[data-q="close"]', p).onclick = () => { G.openQ = null; rerender(); };
+  wrap.appendChild(p);
+  setTimeout(() => { p.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const t = $('textarea', p); if (t && !q.reason) t.focus(); }, 30);
+}
 function vGrade(kid, no) {
   const { course, task, cls } = findClass(kid); if (!cls) return '<div class="card empty">반을 찾을 수 없습니다.</div>';
   task._subject = course.name;
   const stF = F.status ? ` · ${F.status}만` : '';
   scope([[course.name, '#/c/' + course.id], [task.name, '#/t/' + task.id], [cls.name + stF, '#/k/' + cls.id], [no + '번']]);
-  if (!gctx || gctx.kid !== kid || gctx.no !== no) { G.page = 0; G.rot = 0; }
+  if (!gctx || gctx.kid !== kid || gctx.no !== no) { G.page = 0; G.rot = 0; G.openQ = null; G.addMark = null; }
   try { localStorage.setItem('aigrader-last', JSON.stringify({ kid, no })); } catch (e) {}
   const prevNo = navStep(task, cls, no, -1), nextNo = navStep(task, cls, no, 1);
   gctx = { kid, no, task, cls };
@@ -878,14 +953,15 @@ function vGrade(kid, no) {
   // 왼쪽: 제출물
   let left;
   if (!sub) left = `<div class="vpage"><div class="tr">${st === '미응시' ? '미응시로 표시된 학생입니다.' : '이 번호에 배정된 답안이 없습니다. <a href="#/k/' + cls.id + '/pages">답안 나누기</a>에서 확인하세요.'}</div></div>`;
-  else if (G.tab === 'txt') left = `<div class="vpage"><div class="tr">${s.ai && s.ai.transcript ? esc(s.ai.transcript) : '<span class="muted">AI 채점을 하면 답안을 글로 옮겨 보여 줘요.</span>'}</div></div>`;
+  else if (G.tab === 'txt') left = qstripHTML(s) + `<div class="vpage"><div class="tr">${s.ai && s.ai.transcript ? esc(s.ai.transcript) : '<span class="muted">AI 채점을 하면 답안을 글로 옮겨 보여 줘요.</span>'}</div></div>`;
   else {
     G.page = Math.min(G.page, sub.pages.length - 1);
-    left = `<div class="vbar">
+    left = qstripHTML(s) + `<div class="vbar">
         <button data-act="pg" data-d="-1">‹</button>${sub.pages.map((_, j) => `<button class="${j === G.page ? 'on' : ''}" data-act="pgset" data-i="${j}">${j + 1}</button>`).join('')}<button data-act="pg" data-d="1">›</button>
         <span style="opacity:.4">|</span><button data-act="rot" title="돌리기">⟳</button>
         <button data-act="zoom" data-d="0" title="화면에 맞춤">${Math.round(G.zoom * 100)}%</button><button data-act="zoom" data-d="0.15" title="크게">＋</button><button data-act="zoom" data-d="-0.15" title="작게">－</button>
-        <span style="opacity:.4">|</span><button data-act="maskview" class="${G.showMask ? 'on' : ''}" title="AI 로 보내는 모습(이름 가림)">${ic('eye')}</button>
+        <span style="opacity:.4">|</span><button data-act="qadd" class="${G.addMark != null ? 'on' : ''}" title="문항 표시 더하기 — 누른 뒤 답안지에서 자리를 누르세요">${ic('plus')}표시</button>
+        <button data-act="maskview" class="${G.showMask ? 'on' : ''}" title="AI 로 보내는 모습(이름 가림)">${ic('eye')}</button>
       </div>
       <div class="vpage" id="vpage"><div style="position:relative;display:inline-block" id="vwrap"><img id="vimg" alt="" style="width:${G.zoom * 100}%;transform:rotate(${G.rot}deg)"></div></div>`;
   }
@@ -913,6 +989,7 @@ function vGrade(kid, no) {
     if (sub && G.tab === 'img') {
       const p = cls.pages[sub.pages[G.page]];
       $('#vimg').src = await imgURL(p.id);
+      bindQMarks(s);
       if (G.showMask) {
         const wrap = $('#vwrap');
         (cls.masks || []).filter(m => m.page === -1 || m.page === G.page).forEach(m => {
@@ -1030,6 +1107,7 @@ async function runAIGrade(task, cls, no, signal) {
   const s = stu(cls, no);
   r.criteria = (r.criteria || []).map(c => ({ index: Number(c.index), met: !!c.met, points: Number(c.points) || 0, evidence: c.evidence || '', reason: c.reason || '' }));
   s.ai = Object.assign(r, { at: Date.now(), model: AI.isMock() ? '모의' : App.settings().model, strict: task.strict || '보통' });
+  if (!s.qmarksEdited || !(s.qmarks || []).length) s.qmarks = qmarksFrom(r);
   if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
   if (!s.feedback && r.feedback) s.feedback = r.feedback;
   save();
@@ -1291,15 +1369,16 @@ function helpModal(sec) {
 function fname(s) { return String(s).replace(/[\\/:*?"<>|]/g, '_'); }
 function xlsxClass(kid) {
   const { course, task, cls } = findClass(kid);
-  const head = ['번호', '상태', ...task.criteria.map((c, i) => `기준${i + 1}`), 'AI 점수', '점수', '피드백', '세특', '세특 바이트'];
+  const head = ['번호', '상태', ...task.criteria.map((c, i) => `기준${i + 1}`), 'AI 점수', '점수', '문항 표시', '피드백', '세특', '세특 바이트'];
   const rows = [head];
   for (let no = 1; no <= cls.size; no++) {
     const s = cls.students[no] || {}; const st = statusOf(cls, no);
     const marks = task.criteria.map((c, i) => !s.touched ? '' : task.mode === 'points' ? (s.pts[i] || 0) : (s.checks[i] ? 'O' : 'X'));
-    rows.push([no, st, ...marks, aiScoreOf(task, s) ?? '', scoreOf(task, s) ?? '', s.feedback || '', s.seteuk || '', s.seteuk ? App.bytes(s.seteuk) : '']);
+    const qm = (s.qmarks || []).map(q => `${q.no} ${QM[q.mark]}${q.reason ? ' ' + q.reason : ''}`).join(' / ');
+    rows.push([no, st, ...marks, aiScoreOf(task, s) ?? '', scoreOf(task, s) ?? '', qm, s.feedback || '', s.seteuk || '', s.seteuk ? App.bytes(s.seteuk) : '']);
   }
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = head.map((h, i) => ({ wch: h === '세특' || h === '피드백' ? 60 : i === 1 ? 10 : 8 }));
+  ws['!cols'] = head.map((h, i) => ({ wch: h === '세특' || h === '피드백' ? 60 : h === '문항 표시' ? 40 : i === 1 ? 10 : 8 }));
   const crit = [['번호', '채점 기준', '판단 기준', '배점']].concat(task.criteria.map((c, i) => [i + 1, c.text, c.guide || '', task.mode === 'points' ? c.points : '']));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '채점 결과');
@@ -1545,6 +1624,14 @@ const ACT = {
   zoom(el) { const d = Number(el.dataset.d); G.zoom = d ? Math.max(0.4, Math.min(3, G.zoom + d)) : 1; rerender(); },
   maskview() { G.showMask = !G.showMask; rerender(); },
   why() { G.why = !G.why; rerender(); },
+  qopen(el) {
+    const s = stu(gctx.cls, gctx.no); const i = Number(el.dataset.i); const q = s.qmarks[i];
+    G.tab = 'img';
+    if (q.x == null) { G.addMark = i; G.openQ = null; G.page = q.page; toast(`${q.no}번 표시를 둘 자리를 답안지에서 누르세요.`, 3000); }
+    else { G.addMark = null; G.page = q.page; G.openQ = i; G.rot = 0; }
+    rerender();
+  },
+  qadd() { G.addMark = G.addMark === -1 ? null : -1; G.openQ = null; if (G.addMark != null) { G.tab = 'img'; G.rot = 0; toast('답안지에서 표시를 둘 자리를 누르세요.', 2500); } rerender(); },
   stu(el) { const n = navStep(gctx.task, gctx.cls, gctx.no, Number(el.dataset.d)); if (n) location.hash = `#/g/${gctx.kid}/${n}`; },
   status(el) {
     const s = stu(gctx.cls, gctx.no); s.status = el.dataset.v;

@@ -453,3 +453,23 @@ details.aid[open]>summary{margin-bottom:10px}
 .opt:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
 .opt input{margin-top:4px;accent-color:var(--accent)}
 .opt small{color:var(--muted)}
+
+/* 문항 표시(○ △ ✕) — 답안지 위 빨간 표시와 위쪽 문항 줄 */
+:root{--qred:#E1262F}
+.qstrip{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--line);scrollbar-width:thin}
+.qchip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px 0 8px;border-radius:999px;border:1px solid var(--line2);background:var(--card);font-size:13px;white-space:nowrap;max-width:260px;color:var(--text)}
+.qchip:hover{border-color:var(--qred)}
+.qchip b{font-variant-numeric:tabular-nums}
+.qchip .qm{color:var(--qred);font-weight:800;font-size:15px}
+.qchip .qr{overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.qchip .qr i{color:var(--faint)}
+.qchip.qO .qr{color:var(--ok)}
+#vwrap.placing{cursor:crosshair;outline:2px dashed var(--qred);outline-offset:4px}
+.qmk{position:absolute;width:7%;aspect-ratio:1;transform:translate(-50%,-50%);border:0;background:none;padding:0;cursor:pointer;z-index:2;touch-action:none}
+.qmk svg{width:100%;height:100%;fill:none;stroke:var(--qred);stroke-width:3.6;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 1px #fff)}
+.qmk:hover svg{stroke-width:4.6}
+.qpop{position:absolute;z-index:5;width:280px;margin-top:22px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.28);padding:10px;text-align:left}
+.qpop .qno{width:52px;padding:4px 8px}
+.qpop textarea.in{min-height:56px;margin-top:8px;font-size:14px}
+.qpop .seg button{font-size:15px;font-weight:700;color:var(--qred);padding:2px 10px}
+.qpop .seg button.on{background:var(--qred);color:#fff}
