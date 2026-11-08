@@ -14,6 +14,25 @@ const AI = (() => {
   const usage = { last: null };
   const isMock = () => (cfg().apiKey || '').trim().toLowerCase() === 'mock';
 
+  // ---- 무료 버전: 모델마다 분당·하루 요청 한도가 있다. 앱이 간격을 맞추고, 오늘 쓴 양을 세어 보여 준다 ----
+  const RPM = { 'flash-lite': 14, flash: 9, pro: 4 };          // 무료 한도보다 조금 낮게
+  const sent = {};
+  const UK = 'aigrader-usage', useL = [];
+  const today = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+  function usageToday() { let u = null; try { u = JSON.parse(localStorage.getItem(UK) || 'null'); } catch (e) {} if (!u || u.day !== today()) u = { day: today(), m: {} }; return u; }
+  function useSave(u, ev) { try { localStorage.setItem(UK, JSON.stringify(u)); } catch (e) {} useL.forEach(f => { try { f(u, ev); } catch (e) {} }); }
+  const tierName = m => { const d = describe(m); return d.tier === 'flash-lite' ? 'Flash-Lite' : d.tier === 'pro' ? 'Pro' : d.tier === 'flash' ? 'Flash' : m; };
+  function useRow(u, model) { const k = tierName(model); return (u.m[k] = u.m[k] || { n: 0, tin: 0, tout: 0 }); }
+  function useAdd(model, um) { const u = usageToday(); const x = useRow(u, model); x.n++; if (um) { x.tin += Number(um.promptTokenCount) || 0; x.tout += (Number(um.candidatesTokenCount) || 0) + (Number(um.thoughtsTokenCount) || 0); } if (x.limit === 'minute') delete x.limit; useSave(u); }
+  function useLimit(model, kind, next) { const u = usageToday(); const x = useRow(u, model); x.limit = kind; x.limitAt = Date.now(); useSave(u, { model: tierName(model), kind, next: next && tierName(next) }); }
+  const dayLimited = m => (usageToday().m[tierName(m)] || {}).limit === 'day';
+  async function throttle(model, signal) {
+    const cap = RPM[describe(model).tier] || 9;
+    const a = sent[model] = (sent[model] || []).filter(t => Date.now() - t < 60000);
+    if (a.length >= cap) { await sleep(60000 - (Date.now() - a[0]) + 300, signal); return throttle(model, signal); }
+    a.push(Date.now());
+  }
+
   async function call(opts, retried) {
     const { system, parts, schema, temperature = 0.2, signal } = opts;
     const { apiKey } = cfg();
@@ -31,8 +50,11 @@ const AI = (() => {
     const tc = opts.think && !opts._noThink ? thinkCfg(model, opts.think) : null;
     if (tc) body.generationConfig.thinkingConfig = tc;
     const stream = typeof opts.onText === 'function';
+    // 오늘 무료 한도를 다 쓴 모델이면 처음부터 다른 모델로
+    if (dayLimited(model)) { const nx = fallback(model, tried); if (nx) return call(Object.assign({}, opts, { _model: nx, _tried: tried.concat(nx), _noThink: false }), retried); }
     let wait = 2000;
     for (let attempt = 0; ; attempt++) {
+      await throttle(model, signal);
       // opts.firstMs 안에 답의 첫 글자가 오지 않으면(생각하기가 길거나 줄이 밀림) 끊고 더 빠른 모델로
       const ac = new AbortController();
       const onAbort = () => ac.abort();
@@ -99,21 +121,41 @@ const AI = (() => {
           opts.onWait && opts.onWait(0, describe(n).label, 'broken');
           return call(Object.assign({}, opts, { _model: n, _tried: n === model ? tried : tried.concat(n), _parseRetry: (opts._parseRetry || 0) + 1 }), retried);
         };
+        useAdd(model, usage.last && usage.last.model === model ? usage.last : null);
         if (!txt) { const n = again(); if (n) return n; throw new Error('AI 가 답을 주지 않았습니다(' + (why || '빈 응답') + ').'); }
         try { return JSON.parse(txt.trim().replace(/^```(?:json)?\s*/, '').replace(/```\s*$/, '')); }
         catch (e) { const n = again(); if (n) return n; throw new Error(why === 'MAX_TOKENS' ? 'AI 답이 너무 길어 잘렸습니다. 계획서에서 수행평가 부분만 붙여 넣어 다시 해 보세요.' : 'AI 응답을 읽지 못했습니다. 다시 시도해 주세요.'); }
       }
-      let msg = '';
-      try { msg = (await r.json()).error.message; } catch (e) { msg = r.statusText; }
+      let msg = '', errj = null;
+      try { errj = (await r.json()).error; msg = errj.message; } catch (e) { msg = r.statusText; }
       // 이 모델이 생각하기 설정을 모르면 설정 없이 다시
       if (r.status === 400 && tc && /think/i.test(msg)) {
         // 'minimal' 을 모르는 모델이면 'low' 로, 그것도 모르면 설정 없이
         if (opts.think === 'min' && tc.thinkingLevel === 'minimal') return call(Object.assign({}, opts, { think: 'low' }), retried);
         return call(Object.assign({}, opts, { _noThink: true }), retried);
       }
-      if (r.status === 429 || r.status === 503 || r.status === 500) {
-        // 바쁨(503·500)은 같은 모델로 한 번만 다시, 한도(429)는 곧바로 — 그다음은 다른 모델로 넘어간다(한도·혼잡은 모델마다 따로)
-        const next = r.status === 429 || attempt >= 1 ? fallback(model, tried) : null;
+      if (r.status === 429) {
+        // 무료 한도: 분당 한도면 알려 준 시간만큼 기다렸다 같은 모델로(최대 2번), 하루 한도면 다른 모델로
+        const det = JSON.stringify((errj && errj.details) || []) + ' ' + msg;
+        const perDay = /PerDay|per day|daily/i.test(det);
+        const rd = Number((det.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/) || [])[1]);
+        if (!perDay && attempt < 2) {
+          const w = Math.min(60, rd || 15) * 1000;
+          useLimit(model, 'minute');
+          opts.onWait && opts.onWait(Math.round(w / 1000), null, 'quota');
+          await sleep(w, signal); continue;
+        }
+        const next = fallback(model, tried);
+        useLimit(model, perDay ? 'day' : 'minute', next);
+        if (next) {
+          opts.onWait && opts.onWait(0, describe(next).label, perDay ? 'day' : 'quota');
+          return call(Object.assign({}, opts, { _model: next, _tried: tried.concat(next), _noThink: false }), retried);
+        }
+        throw new Error(perDay ? `${tierName(model)} 오늘 무료 한도를 다 썼어요. 내일 다시 쓰거나 결제를 등록하면 늘어나요.` : '무료 사용 한도(분당)에 걸렸어요. 1분 뒤 다시 해 주세요.');
+      }
+      if (r.status === 503 || r.status === 500) {
+        // 바쁨(503·500)은 같은 모델로 한 번만 다시, 그다음은 다른 모델로 넘어간다
+        const next = attempt >= 1 ? fallback(model, tried) : null;
         if (next) {
           opts.onWait && opts.onWait(0, describe(next).label);
           return call(Object.assign({}, opts, { _model: next, _tried: tried.concat(next), _noThink: false }), retried);
@@ -149,10 +191,10 @@ const AI = (() => {
   function fallback(model, tried, fast) {
     let ids = [];
     try { ids = JSON.parse(localStorage.getItem('aigrader-models') || '[]'); } catch (e) {}
-    if (!ids.length) ids = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
+    ids = ['gemini-flash-latest', 'gemini-flash-lite-latest'].concat(ids.filter(i => describe(i).ver >= 3));
     const cur = describe(model);
     const plain = /^gemini-(\d+(\.\d+)?-(pro|flash|flash-lite)(-\d{3})?|(pro|flash|flash-lite)-latest)$/;
-    const ok = d => !tried.includes(d.id) && plain.test(d.id) && (d.latest || (d.ver >= 2.5 && !d.preview)) &&
+    const ok = d => !tried.includes(d.id) && plain.test(d.id) && (d.latest || (d.ver >= 3 && !d.preview)) && !dayLimited(d.id) &&
       (d.tier === 'flash' || d.tier === 'flash-lite' || (d.tier === 'pro' && cur.tier === 'pro'));
     const list = sortModels(ids).filter(ok);
     // fast: 답이 늦을 때 — 생각하기가 짧은 Flash-Lite 를 먼저
@@ -191,8 +233,8 @@ const AI = (() => {
   }
   function thinkCfg(id, level) {
     const d = describe(id);
-    if (d.latest || d.ver >= 3) return { thinkingLevel: level === 'min' && d.tier !== 'pro' ? 'minimal' : 'low' };
-    if (d.ver >= 2.5) return { thinkingBudget: d.tier === 'pro' ? 128 : 0 }; // 2.5 Pro 는 끌 수 없어 최소값
+    if (d.latest || d.ver >= 3) return { thinkingLevel: level === 'min' && d.tier !== 'pro' ? 'minimal' : level === 'medium' && d.tier !== 'pro' ? 'medium' : 'low' };
+    if (d.ver >= 2.5) return { thinkingBudget: level === 'medium' ? 1024 : d.tier === 'pro' ? 128 : 0 }; // 2.5 Pro 는 끌 수 없어 최소값
     return null;
   }
   function modelVersion(id) { const d = describe(id); return d.latest ? 99 : d.ver; }
@@ -325,13 +367,14 @@ const AI = (() => {
   // 채점 방식(설정): 정확하게 = 읽기·세특 Flash, 정답표·판단 Flash 깊게, 확인용 판단 Flash-Lite / 빠르게 = 고른 모델, 생각 낮게
   const MODELS = { flash: 'gemini-flash-latest', lite: 'gemini-flash-lite-latest' };
   function plan() {
-    const s = cfg();
-    if ((s.mode || 'accurate') !== 'fast') return {
+    const s = cfg(), mode = s.mode || 'auto';
+    if (mode === 'accurate') return {
       key: { model: MODELS.flash, think: null }, read: { model: MODELS.flash, think: 'low' },
       judge: { model: MODELS.flash, think: null }, judge2: { model: MODELS.lite, think: 'low' }, seteuk: { model: MODELS.flash, think: 'low' },
     };
-    const m = s.model;
-    return { key: { model: m, think: 'low' }, read: { model: m, think: 'low' }, judge: { model: m, think: 'low' }, judge2: { model: m, think: 'low' }, seteuk: { model: m, think: 'low' } };
+    if (mode === 'fast') { const m = s.model; return { key: { model: m, think: 'low' }, read: { model: m, think: 'low' }, judge: { model: m, think: 'low' }, judge2: null, seteuk: { model: m, think: 'low' } }; }
+    // 자동(무료 버전 기본): 정답표는 형마다 한 번 Flash 로 꼼꼼히, 답 읽기·세특은 빠른 Flash-Lite, 기준 판단만 Flash(글만 보내 빠름)
+    return { key: { model: MODELS.flash, think: 'medium' }, read: { model: MODELS.lite, think: 'low' }, judge: { model: MODELS.flash, think: 'low' }, judge2: null, seteuk: { model: MODELS.lite, think: 'low' } };
   }
 
   // 1) 정답표: 시험지(첫 답안지)를 읽고 형, 문항별 정답, 기준↔문항 대응, 판단 지침
@@ -519,5 +562,5 @@ const AI = (() => {
     return { text: t, level: '분석', quotes: ['(모의) 1번 학생 답'] };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, onUsage: f => useL.push(f) };
 })();

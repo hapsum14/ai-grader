@@ -4,7 +4,7 @@
 /* ================= 설정 ================= */
 const App = (() => {
   const KEY = 'aigrader-settings';
-  const DEF = { apiKey: '', model: 'gemini-flash-latest', byteMin: 250, byteMax: 300 };
+  const DEF = { apiKey: '', model: 'gemini-flash-lite-latest', byteMin: 250, byteMax: 300, mode: 'auto' };
   function settings() {
     try { return Object.assign({}, DEF, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { return Object.assign({}, DEF); }
   }
@@ -507,7 +507,7 @@ async function startPlan(src) {
       ? `글 ${full.length.toLocaleString()}자를 읽었습니다. AI 가 수행평가 채점 기준을 정리하는 중…`
       : `글 ${full.length.toLocaleString()}자 가운데 수행평가 부분 <b>${focus.length.toLocaleString()}자</b>만 골라 AI 가 채점 기준을 정리하는 중…`;
     timer = setInterval(tick, 500); tick();
-    const r = await AI.extractPlan(send, n => { got = n; phase = ''; }, (s, alt, why) => { got = 0; phase = alt ? (why === 'broken' ? ` · 답이 깨져 ${alt} 로 다시 받는 중` : why === 'slow' ? ` · 답이 늦어 더 빠른 ${alt} 로 바꿈` : ` · 서버가 바빠 ${alt} 로 바꿔 시도`) : ` · 서버가 바빠 ${s}초 뒤 다시 시도`; });
+    const r = await AI.extractPlan(send, n => { got = n; phase = ''; }, (s, alt, why) => { got = 0; phase = alt ? (why === 'broken' ? ` · 답이 깨져 ${alt} 로 다시 받는 중` : why === 'slow' ? ` · 답이 늦어 더 빠른 ${alt} 로 바꿈` : why === 'day' ? ` · 오늘 무료 한도를 다 써 ${alt} 로 바꿈` : ` · 바빠서 ${alt} 로 바꿔 시도`) : why === 'quota' ? ` · 무료 한도(분당) — ${s}초 기다리는 중` : ` · 서버가 바빠 ${s}초 뒤 다시 시도`; });
     clearInterval(timer);
     const c = {
       id: uid(), name: r.subject || (src.file ? src.file.name : '새 과목'), grade: r.grade || '', semester: r.semester || '', year: r.school_year || '',
@@ -1292,7 +1292,7 @@ async function runAIGrade(task, cls, no, signal) {
 async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   const key = keyOf(task, cls) || { answers: [], crit: [] };
   const P = AI.plan();
-  const [j1, j2] = await Promise.all([AI.judge(task, key, answers, signal, P.judge), AI.judge(task, key, answers, signal, P.judge2).catch(() => null)]);
+  const [j1, j2] = await Promise.all([AI.judge(task, key, answers, signal, P.judge), P.judge2 ? AI.judge(task, key, answers, signal, P.judge2).catch(() => null) : null]);
   const all = answers.map(a => a.text).join(' ');
   const crit = (j1.criteria || []).map(c => {
     const idx = Number(c.index); const o = j2 && (j2.criteria || []).find(x => Number(x.index) === idx);
@@ -1460,12 +1460,14 @@ function settingsModal() {
       <h3>${ic('key')}AI</h3>
       <label class="f">Gemini API 키 <a href="${KEY_URL}" target="_blank" rel="noopener">무료 발급 ↗</a></label>
       <div class="row" style="flex-wrap:nowrap"><input class="in" id="skey" type="password" value="${esc(s.apiKey)}" placeholder="AIza…" autocomplete="off"><button class="btn sm" id="sshow">보기</button></div>
-      <label class="f">모델</label>
-      <div class="row" style="flex-wrap:nowrap"><select class="in" id="smodel">${modelOptions(cachedModels(), s.model)}</select><button class="btn sm" id="stest" title="키가 맞는지 보고 쓸 수 있는 모델을 새로 불러옵니다">확인</button></div>
-      <p class="small muted" id="stestmsg" style="margin:6px 0 0"></p>
       <label class="f">채점 방식</label>
-      <div class="row"><span class="seg" id="smode"><button data-m="accurate" class="${(s.mode || 'accurate') !== 'fast' ? 'on' : ''}">정확하게</button><button data-m="fast" class="${s.mode === 'fast' ? 'on' : ''}">빠르게</button></span>
-        <span class="small muted" id="smodenote"></span></div>
+      <div class="row"><span class="seg" id="smode">${[['auto', '자동(무료 추천)'], ['accurate', '정확하게'], ['fast', '빠르게']].map(([m, l]) => `<button data-m="${m}" class="${(s.mode || 'auto') === m ? 'on' : ''}">${l}</button>`).join('')}</span></div>
+      <p class="small muted" id="smodenote" style="margin:6px 0 0"></p>
+      <label class="f">오늘 사용량 <a href="https://ai.google.dev/gemini-api/docs/rate-limits" target="_blank" rel="noopener">무료 한도 안내 ↗</a></label>
+      <div id="susage">${usageHTML()}</div>
+      <details style="margin-top:8px"><summary class="small muted" style="cursor:pointer">모델 직접 고르기 <span class="faint">— '빠르게'와 계획서 분석에 씀</span></summary>
+        <div class="row" style="flex-wrap:nowrap;margin-top:6px"><select class="in" id="smodel">${modelOptions(cachedModels(), s.model)}</select><button class="btn sm" id="stest" title="키가 맞는지 보고 쓸 수 있는 모델을 새로 불러옵니다">확인</button></div>
+        <p class="small muted" id="stestmsg" style="margin:6px 0 0"></p></details>
     </div>
     <div class="sset">
       <h3>${ICON.grad}세특</h3>
@@ -1484,7 +1486,7 @@ function settingsModal() {
       <p class="small faint" style="margin:10px 0 0">무료 키로 보낸 답안은 Google 이 서비스 개선에 쓸 수 있어요. 이름 칸 가리기를 꼭 하세요.</p>
     </div>
     <div class="foot"><button class="btn" data-act="close">닫기</button><button class="btn primary" id="ssave">저장</button></div>`);
-  const MN = { accurate: '답 읽기는 Flash, 판단은 Flash 가 깊게 생각하고 한 번 더 확인 · 1명 약 20~40초', fast: '위에서 고른 모델로 빠르게 · 1명 약 5초 · 애매한 판단이 늘 수 있어요' };
+  const MN = { auto: '무료 키에 맞춘 절충: 답 읽기·세특은 Flash-Lite(빠름), 기준 판단은 Flash(정확) · 채점 1명 약 8~10초, 세특 약 3~5초 · 무료 한도를 넘으면 저절로 다른 모델로', accurate: '모두 Flash, 판단은 깊게 생각하고 한 번 더 확인 · 1명 약 20~40초 · 무료 한도를 빨리 씀', fast: '아래에서 고른 모델 하나로 빠르게 · 1명 약 5초 · 애매한 판단이 늘 수 있어요' };
   const modeNote = () => { $('#smodenote').textContent = MN[$('#smode button.on').dataset.m]; };
   $$('#smode button').forEach(b => b.onclick = () => { $$('#smode button').forEach(x => x.classList.toggle('on', x === b)); modeNote(); });
   modeNote();
@@ -1531,6 +1533,23 @@ function settingsModal() {
     App.saveSettings({ apiKey: $('#skey').value.trim(), model: $('#smodel').value || 'gemini-flash-latest', byteMin: Number($('#smin').value) || 250, byteMax: Number($('#smax').value) || 300, mode: $('#smode button.on').dataset.m });
     closeModal(); rerender(); toast('저장했습니다.');
   };
+}
+
+// 오늘 쓴 양(모델별 요청 수·토큰)과 무료 한도 도달 여부
+function usageHTML() {
+  const u = AI.usageToday(); const rows = Object.entries(u.m);
+  if (!rows.length) return '<p class="small muted" style="margin:0">오늘은 아직 쓰지 않았어요.</p>';
+  return `<div class="usage">${rows.map(([k, x]) => `<div class="ur"><b>${esc(k)}</b><span>${x.n}회</span><span class="faint">${Math.round((x.tin + x.tout) / 1000)}천 토큰</span>${x.limit === 'day' ? '<span class="pill bad">오늘 한도 다 씀</span>' : x.limit === 'minute' ? '<span class="pill ai">분당 한도 — 잠깐 기다리는 중</span>' : '<span class="pill ok">여유</span>'}</div>`).join('')}</div>
+    <p class="small faint" style="margin:6px 0 0">무료 한도는 Google 이 모델마다 정해요(분당·하루). 하루 한도를 넘으면 다른 모델로 저절로 바꿔 이어 가요. 한도는 매일 다시 채워져요.</p>`;
+}
+function renderQuota() {
+  const b = $('#quota'); if (!b || typeof AI === 'undefined') return;
+  const u = AI.usageToday(); const rows = Object.entries(u.m);
+  const day = rows.filter(([, x]) => x.limit === 'day').map(([k]) => k), min = rows.filter(([, x]) => x.limit === 'minute' && Date.now() - x.limitAt < 70000).map(([k]) => k);
+  const n = rows.reduce((t, [, x]) => t + x.n, 0);
+  b.classList.toggle('hide', !n); b.classList.toggle('warn', !!(day.length || min.length));
+  b.innerHTML = `${ic('bot')}<span class="lb">${day.length ? `${day.join('·')} 한도 다 씀` : min.length ? '분당 한도 대기' : `오늘 ${n}회`}</span>`;
+  b.title = rows.map(([k, x]) => `${k}: ${x.n}회${x.limit === 'day' ? ' (오늘 한도 다 씀)' : ''}`).join('\n') + '\n누르면 자세히';
 }
 
 /* ================= 도움말 ================= */
@@ -2067,4 +2086,9 @@ function renderGsync() {
   route();
   resumeJobs();
   if (typeof Sync !== 'undefined') { Sync.onChange(renderGsync); renderGsync(); Sync.boot(); }
+  AI.onUsage((u, ev) => {
+    renderQuota(); const el = $('#susage'); if (el) el.innerHTML = usageHTML();
+    if (ev && ev.kind === 'day') toast(`${ev.model} 오늘 무료 한도를 다 써서 ${ev.next || '다른 모델'}(으)로 이어 가요.`, 5000);
+  });
+  renderQuota(); setInterval(renderQuota, 15000);
 })();
