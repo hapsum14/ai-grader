@@ -625,3 +625,5 @@ details.aid[open]>summary{margin-bottom:10px}
 .qflag{border-left:3px solid var(--ai)}
 
 .whyin.dim{opacity:.5;text-decoration:line-through}
+
+.fb.dimtxt{opacity:.5}

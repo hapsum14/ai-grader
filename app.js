@@ -1443,10 +1443,12 @@ function vGrade(kid, no) {
           ${s.formWarn ? `<div class="note" style="margin-top:6px">${esc(s.formWarn)}</div>` : ''}</div>
         ${s.ai ? `<div class="sec-h" style="margin-bottom:6px">${ic('bot')}AI 판단<span class="faint small" style="font-weight:400">${s.ai.strict ? esc(s.ai.strict) + ' · ' : ''}${new Date(s.ai.at).toLocaleDateString()}</span><span class="sp"></span>
             <button class="btn sm" data-act="aigrade" title="${s.done ? '채점 완료한 학생은 점수 그대로, AI 판단만 새로' : '새 AI 판단으로 체크를 바꿔요'}">${ICON.bot}다시 채점</button></div>
-          <details class="aid" id="aidet" ${G.aiOpen ? 'open' : ''}><summary><span class="small muted">피드백 · 관찰 보기</span></summary>
+          <details class="aid" id="aidet" ${G.aiOpen ? 'open' : ''}><summary><span class="small muted">피드백 · 세특 초안 보기</span></summary>
             ${s.ai.blank ? '<p class="note">백지 또는 답이 거의 없음</p>' : ''}${s.ai.unreadable ? '<p class="note">글씨가 흐리거나 잘림 — 원본 확인</p>' : ''}
             <div class="fb">${esc(s.ai.feedback || '')}</div>
-            <div class="small muted" style="margin:8px 0 4px">관찰 요약</div><div class="fb">${esc(s.ai.observation || '')}</div></details>`
+            <div class="small muted" style="margin:8px 0 4px">세특 초안 <span class="faint">— AI 판단 기준. 판단을 바꾸지 않으면 '세특 만들기'가 이 초안을 그대로 씀</span></div>
+            ${teacherChanged(task, s) ? '<div class="small" style="color:var(--accent);margin-bottom:4px">선생님이 판단을 바꿔서 이 초안은 쓰지 않고, 바뀐 판단으로 새로 써요.</div>' : ''}
+            <div class="fb ${teacherChanged(task, s) ? 'dimtxt' : ''}">${esc(s.ai.observation || '')}</div></details>`
           : `<button class="btn primary wide" data-act="aigrade" ${sub ? '' : 'disabled'}>${ICON.wand}AI 채점</button>`}
       </div>
       <div class="gsec">
@@ -1459,6 +1461,7 @@ function vGrade(kid, no) {
         <textarea class="in memo" id="tmemo" rows="1" placeholder="관찰 메모 (선택) — 세특에 반영">${esc(s.memo)}</textarea>
         ${s.seteuk && s.seteukStale ? `<div class="note stale">채점 판단을 바꿨어요. 이 세특은 바꾸기 전 판단으로 쓴 것이에요. <button class="btn sm primary" data-act="mkseteuk">${ICON.wand}바뀐 판단으로 다시 쓰기</button></div>` : ''}
         <textarea class="in" id="tset" rows="5" placeholder="'세특 만들기'를 누르면 채점 결과로 초안을 씁니다">${esc(s.seteuk)}</textarea>
+        ${s.seteuk && s.seteukFrom === 'draft' && s.seteuk === s.seteukAI ? '<div class="small faint" style="margin-top:4px">채점 때 쓴 세특 초안을 그대로 썼어요(요청 없이 바로).</div>' : ''}
         <ul class="warns" id="warns">${warns.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
         <button class="btn soft" data-act="mkseteuk" style="margin-top:8px">${ICON.wand}${s.seteuk ? '다시 만들기' : '세특 만들기'}</button>
       </div>
@@ -1742,7 +1745,7 @@ async function runAIGrade(task, cls, no, signal) {
 async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   const key = keyFor(task, cls, no) || { answers: [], crit: [] };
   const P = AI.plan();
-  const [j1, j2] = await Promise.all([AI.judge(task, key, answers, signal, P.judge), P.judge2 ? AI.judge(task, key, answers, signal, P.judge2).catch(() => null) : null]);
+  const [j1, j2] = await Promise.all([AI.judge(task, key, answers, signal, P.judge), P.judge2 ? AI.judge(task, key, answers, signal, Object.assign({ noDraft: true }, P.judge2)).catch(() => null) : null]);
   const all = answers.map(a => a.text).join(' ');
   const crit = (j1.criteria || []).map(c => {
     const idx = Number(c.index); const o = j2 && (j2.criteria || []).find(x => Number(x.index) === idx);
@@ -1754,7 +1757,7 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   });
   const s = stu(cls, no);
   const before = task.criteria.map((c, i) => finalMet(task, s, i)).join(); // 이전 최종 판단(손대지 않았으면 이전 AI 판단)
-  s.ai = { transcript: answers.map(a => `${a.no}. ${a.text}`).join('\n'), answers, criteria: crit, feedback: j1.feedback || '', observation: j1.observation || '',
+  s.ai = { transcript: answers.map(a => `${a.no}. ${a.text}`).join('\n'), answers, criteria: crit, feedback: j1.feedback || '', observation: j1.observation || '', obsQuotes: j1.obsQuotes || [],
     blank: !!extra.blank, unreadable: !!extra.unreadable, at: Date.now(), model: AI.isMock() ? '모의' : P.judge.model, strict: task.strict || '보통', form: stuForm(cls, no) };
   if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
   if (s.seteuk && before !== task.criteria.map((c, i) => finalMet(task, s, i)).join()) s.seteukStale = true;
@@ -1762,11 +1765,27 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   save();
 }
 
+// 선생님이 AI 판단을 바꾼 기준이 있는지
+function teacherChanged(task, s) { return !!(s.ai && s.touched && task.criteria.some((c, i) => { const a = s.ai.criteria.find(x => x.index === i + 1); return a && !!a.met !== finalMet(task, s, i); })); }
+// 채점 때 함께 쓴 세특 초안을 그대로 쓸 수 있는지(판단이 그대로이고, 분량·금지어·근거가 맞을 때)
+function draftOK(task, s, rng) {
+  const d = s.ai && String(s.ai.observation || '').replace(/\s+/g, ' ').trim();
+  if (!d || teacherChanged(task, s) || s.special != null || s.override != null || s.memo) return null;
+  if (s.feedback && s.feedback !== s.ai.feedback) return null; // 선생님이 고친 피드백이 있으면 새로 쓴다
+  const b = App.bytes(d); if (b < rng[0] * 0.9 || b > rng[1] + 15) return null;
+  if (lint(d, task).length) return null;
+  if (!/에서는/.test(d.slice(0, 40))) return null;
+  const all = s.ai.transcript || '';
+  if ((s.ai.obsQuotes || []).some(q => q && !found(q, all))) return null;
+  return { text: d, b };
+}
 async function runSeteuk(task, cls, no, signal) {
   const s = stu(cls, no);
   const set = App.settings(); let rng = [set.byteMin, set.byteMax];
-  const info = seteukInfo(task, s, cls, no);
   if (levelOf(task, s) === '하') rng = [Math.min(120, rng[0]), rng[1], 'low'];
+  const ok = draftOK(task, s, rng);
+  if (ok) { s.seteuk = ok.text; s.seteukAI = ok.text; s.seteukStale = false; s.seteukFrom = 'draft'; save(); return { text: ok.text, b: ok.b, dist: 0, draft: true }; }
+  const info = seteukInfo(task, s, cls, no);
   const styles = Style.pick(task, 3);
   let best = null, prev = null, unsupported = [];
   const all = (s.ai && s.ai.transcript) || '';
@@ -1784,7 +1803,7 @@ async function runSeteuk(task, cls, no, signal) {
     if (!dist) break;
     prev = { text, bytes: b };
   }
-  s.seteuk = best.text; s.seteukAI = best.text; s.seteukStale = false; save();
+  s.seteuk = best.text; s.seteukAI = best.text; s.seteukStale = false; s.seteukFrom = 'write'; save();
   return best;
 }
 
