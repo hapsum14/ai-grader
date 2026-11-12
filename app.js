@@ -284,12 +284,30 @@ function removePages(cls, drop) {
   cls.subs = [...fixedBy].filter(([p]) => keep.includes(p)).map(([p, no]) => ({ id: uid(), no, fixed: true, pages: [keep.indexOf(p)] }));
   rebuildSubs(cls);
 }
-function movePages(cls, idxs, target, afterIt) {
+function attachZoom(box, im, zi, zo, zf) {
+  let z = 1, drag = null;
+  const setZ = (nz, cx, cy) => {
+    nz = Math.max(1, Math.min(4, Math.round(nz * 100) / 100));
+    const r = box.getBoundingClientRect(); const px = cx == null ? r.width / 2 : cx - r.left, py = cy == null ? r.height / 2 : cy - r.top;
+    const fx = (box.scrollLeft + px) / (box.scrollWidth || 1), fy = (box.scrollTop + py) / (box.scrollHeight || 1);
+    z = nz; im.style.width = (z * 100) + '%'; box.classList.toggle('zoomed', z > 1); if (zf) zf.textContent = Math.round(z * 100) + '%';
+    box.scrollLeft = fx * box.scrollWidth - px; box.scrollTop = fy * box.scrollHeight - py;
+  };
+  if (zi) zi.onclick = () => setZ(z + 0.5); if (zo) zo.onclick = () => setZ(z - 0.5); if (zf) zf.onclick = () => setZ(1);
+  box.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); setZ(z * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY); }, { passive: false });
+  im.addEventListener('dblclick', e => setZ(z > 1 ? 1 : 2.2, e.clientX, e.clientY));
+  box.addEventListener('mousedown', e => { if (z <= 1 || e.button) return; drag = { x: e.clientX, y: e.clientY, l: box.scrollLeft, t: box.scrollTop }; box.classList.add('drag'); e.preventDefault(); });
+  const mv = e => { if (!drag) return; box.scrollLeft = drag.l - (e.clientX - drag.x); box.scrollTop = drag.t - (e.clientY - drag.y); };
+  const up = () => { drag = null; box.classList.remove('drag'); };
+  window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+  return { reset: () => setZ(1) };
+}
+function movePages(cls, idxs, target, afterIt, keepStart) {
   const pick = new Set(idxs);
   if (!pick.size || pick.has(target)) return false;
   // 쪽의 오른쪽(뒤)에 놓으면 그 학생에 붙이고, 학생 첫 쪽의 왼쪽(앞)에 놓으면 새 학생으로 넣는다
   const firstLive = cls.pages.findIndex(p => !p.skip);
-  const newStudent = !afterIt && (target === firstLive || cls.starts.includes(target));
+  const newStudent = keepStart || (!afterIt && (target === firstLive || cls.starts.includes(target)));
   const startObjs = new Set(cls.starts.map(i => cls.pages[i]));
   const fixedBy = new Map(cls.subs.filter(x => x.fixed).map(x => [cls.pages[x.pages[0]], x.no]));
   const moving = cls.pages.filter((_, i) => pick.has(i));
@@ -351,6 +369,11 @@ async function autoOrient(cls, onMsg) {
   return turned;
 }
 // 끄는 동안 쪽 위에 보일 말
+function groupHint(cls, i, right, g) {
+  const tx = cls.subs.find(x => x.pages.includes(i));
+  if (!tx || tx === g) return '같은 학생';
+  return `${tx.no}번 학생 ${right ? '뒤로' : '앞으로'}`;
+}
 function dropHint(cls, i, right) {
   const firstLive = cls.pages.findIndex(p => !p.skip);
   const x = cls.subs.find(s => s.pages.includes(i));
@@ -1146,7 +1169,7 @@ function vPages(kid) {
     ${over.length ? `<p class="note" style="margin-top:12px">답안이 학생 수보다 많아요(${over.map(s => s.no + '번').join(', ')}). 쪽 수나 빼야 할 쪽을 확인하세요.</p>` : ''}
     ${!cls.masks.length ? `<p class="note blue" style="margin-top:12px">AI 로 보내기 전에 <b>이름 칸 가리기</b>를 해 주세요.</p>` : ''}
   </div>
-  <p class="small muted" style="margin:0 0 8px">쪽을 <b>끌어서</b> 옮겨요. 여러 쪽은 왼쪽 위 네모(또는 <b>Ctrl·Shift + 누르기</b>)로 고른 뒤 함께 끌어요. 쪽의 <b>오른쪽</b>에 놓으면 그 학생에 붙고, 학생 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생으로 들어가요.</p>
+  <p class="small muted" style="margin:0 0 8px">쪽을 <b>끌어서</b> 옮겨요. 이어붙인 학생은 <b>쪽들이 함께</b> 움직이고, 한 쪽만 옮기려면 네모로 고른 뒤 끌어요(또는 Alt+끌기). 여러 쪽은 왼쪽 위 네모(또는 <b>Ctrl·Shift + 누르기</b>)로 고른 뒤 함께 끌어요. 쪽의 <b>오른쪽</b>에 놓으면 그 학생에 붙고, 학생 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생으로 들어가요.</p>
   ${selBar}
   <div class="thumbs" id="thumbs">${thumbs}</div>`;
 }
@@ -1167,23 +1190,26 @@ function pageDrag(cls) {
     const th = e.target.closest('.th');
     if (th && (e.ctrlKey || e.metaKey || e.shiftKey) && !e.target.closest('button,input')) { e.preventDefault(); e.stopPropagation(); toggle(idxOf(th), e.shiftKey); }
   }, true);
-  let drag = null, mark = null;
+  let drag = null, mark = null; var dragGroup = null;
   const clearMark = () => { if (mark) { mark.classList.remove('dropL', 'dropR'); delete mark.dataset.drop; } mark = null; };
   box.addEventListener('dragstart', e => {
     const th = e.target.closest('.th'); if (!th || e.target.closest('input')) return;
     const i = idxOf(th);
-    if (!sel.has(cls.pages[i].id)) { sel.clear(); sel.add(cls.pages[i].id); }
+    // 고른 쪽이 아니면 그 학생의 쪽을 모두 함께(한 쪽만 옮기려면 네모로 골라서 끌기)
+    const grp = !sel.has(cls.pages[i].id) && !e.altKey ? cls.subs.find(x => x.pages.includes(i)) : null;
+    if (grp && grp.pages.length > 1) { sel.clear(); grp.pages.forEach(k => sel.add(cls.pages[k].id)); dragGroup = grp; }
+    else { dragGroup = null; if (!sel.has(cls.pages[i].id)) { sel.clear(); sel.add(cls.pages[i].id); } }
     drag = cls.pages.map((p, k) => sel.has(p.id) ? k : -1).filter(k => k >= 0);
     e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', 'pages'); } catch (x) {}
     drag.forEach(k => { const el = box.querySelector(`[data-pi="${k}"]`); if (el) el.classList.add('dragging'); });
-    if (drag.length > 1) { const g = document.createElement('div'); g.className = 'dragghost'; g.textContent = `${drag.length}쪽 옮기기`; document.body.appendChild(g); e.dataTransfer.setDragImage(g, 20, 14); setTimeout(() => g.remove(), 0); }
+    if (drag.length > 1) { const g = document.createElement('div'); g.className = 'dragghost'; g.textContent = dragGroup ? `${dragGroup.no}번 학생 ${drag.length}쪽` : `${drag.length}쪽 옮기기`; document.body.appendChild(g); e.dataTransfer.setDragImage(g, 20, 14); setTimeout(() => g.remove(), 0); }
   });
   box.addEventListener('dragover', e => {
     if (!drag) return; const th = e.target.closest('.th'); if (!th) return;
     e.preventDefault(); e.dataTransfer.dropEffect = 'move';
     const r = th.getBoundingClientRect(), right = e.clientX > r.left + r.width / 2;
     if (mark !== th) clearMark(); mark = th;
-    th.classList.toggle('dropR', right); th.classList.toggle('dropL', !right); th.dataset.drop = dropHint(cls, idxOf(th), right);
+    th.classList.toggle('dropR', right); th.classList.toggle('dropL', !right); th.dataset.drop = dragGroup ? groupHint(cls, idxOf(th), right, dragGroup) : dropHint(cls, idxOf(th), right);
     // 끄는 동안 화면 끝에 가면 저절로 넘김
     const sc = document.scrollingElement, m = 70; const main = th.closest('.main, main, #main') || sc;
     if (e.clientY < m) (main.scrollBy ? main : sc).scrollBy(0, -18); else if (e.clientY > innerHeight - m) (main.scrollBy ? main : sc).scrollBy(0, 18);
@@ -1194,9 +1220,14 @@ function pageDrag(cls) {
     const th = e.target.closest('.th'); const right = th && th.classList.contains('dropR'); clearMark();
     const list = drag; drag = null;
     if (!th) return rerender();
-    const hint = dropHint(cls, idxOf(th), right);
+    let hint = dropHint(cls, idxOf(th), right), moved;
     snap(`${list.length}쪽 옮기기`);
-    const moved = movePages(cls, list, idxOf(th), right);
+    if (dragGroup) { // 학생 묶음: 놓은 학생의 앞이나 뒤에 새 학생으로
+      const tx = cls.subs.find(x => x.pages.includes(idxOf(th)));
+      hint = groupHint(cls, idxOf(th), right, dragGroup);
+      moved = tx && tx !== dragGroup ? movePages(cls, list, right ? tx.pages[tx.pages.length - 1] : tx.pages[0], right, true) : false;
+      dragGroup = null;
+    } else moved = movePages(cls, list, idxOf(th), right);
     if (!moved) UNDO.stack.pop(), renderUndo();
     if (moved) { G.plast = null; sel.clear(); save(); rerender(); toast(`${list.length}쪽 옮김 · ${hint.replace('붙이기', '붙였어요').replace('새 학생으로', '새 학생으로 넣었어요')}${Object.values(cls.students).some(x => x.ai) ? ' · 이미 채점한 학생은 다시 채점해 주세요' : ''}`, 3500); }
     else rerender();
@@ -2577,9 +2608,25 @@ const ACT = {
     rebuildSubs(cls); save(); rerender();
   },
   async bigpage(el) {
-    const { cls } = gPages(); const p = cls.pages[Number(el.dataset.i)];
-    modal(`<div style="text-align:center"><img id="bigimg" style="max-width:100%;max-height:80vh"></div><div class="foot"><button class="btn" data-act="close">닫기</button></div>`, true);
-    $('#bigimg').src = await imgURL(p.id);
+    const { cls } = gPages(); let i = Number(el.dataset.i);
+    modal(`<div class="bigbar"><button class="ibtn" id="bvp" title="앞 쪽 (←)">‹</button><b id="bvl"></b><button class="ibtn" id="bvn" title="다음 쪽 (→)">›</button><span class="small faint" id="bvw"></span>
+        <span class="sp"></span><span class="kzoom"><button class="ibtn" id="bzo" title="작게">−</button><button class="btn sm ghost" id="bzf" title="폭에 맞추기">100%</button><button class="ibtn" id="bzi" title="크게">+</button></span></div>
+      <div class="bigbox"><img id="bigimg" alt="" draggable="false"></div>
+      <div class="foot"><span class="small faint">Ctrl+휠·두 번 누르기로 크게, 끌어서 옮기기</span><span class="sp"></span><button class="btn" data-act="close">닫기</button></div>`, true);
+    $('#mbox').classList.add('bigpv');
+    const box = $('#mbox .bigbox'), im = $('#bigimg');
+    const z = attachZoom(box, im, $('#bzi'), $('#bzo'), $('#bzf'));
+    const show = async () => {
+      const p = cls.pages[i]; if (!p) return;
+      const x = cls.subs.find(s => s.pages.includes(i));
+      $('#bvl').textContent = `${i + 1}쪽`; $('#bvw').textContent = x ? `${x.no}번 학생 ${x.pages.indexOf(i) + 1}/${x.pages.length}` : (p.skip ? '뺀 쪽' : '');
+      im.src = await imgURL(p.id); z.reset();
+    };
+    $('#bvp').onclick = () => { if (i > 0) { i--; show(); } };
+    $('#bvn').onclick = () => { if (i < cls.pages.length - 1) { i++; show(); } };
+    const key = e => { if ($('#modal').classList.contains('hide')) { document.removeEventListener('keydown', key, true); return; } if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); $('#bvp').click(); } else if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); $('#bvn').click(); } };
+    document.addEventListener('keydown', key, true);
+    show();
   },
   masks(el) { maskModal(el.dataset.id); },
   morefiles(el) { filePick(true, el.dataset.id); },

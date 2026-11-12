@@ -850,3 +850,14 @@ body.grading #tcredit{display:none}
 
 .cbyte{display:inline-flex;align-items:center;gap:3px;margin-left:4px}
 .cbyte .in{width:62px;padding:2px 6px;font-size:13px;text-align:center}
+
+/* 쪽 미리보기 크게 보기 */
+#modal .box.bigpv{width:min(1200px,96vw);height:92vh;display:flex;flex-direction:column;overflow:hidden;padding:14px 18px}
+.bigpv .bigbar{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.bigpv .bigbar .ibtn{font-size:18px;font-weight:700}
+.bigpv .kzoom{display:flex;align-items:center;gap:2px}
+.bigpv .kzoom .btn{min-width:58px}
+.bigpv .bigbox{flex:1;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--bg2,#f4f4f6);cursor:zoom-in}
+.bigpv .bigbox img{display:block;margin:0 auto;max-width:none;width:100%}
+.bigpv .bigbox.zoomed{cursor:grab} .bigpv .bigbox.drag{cursor:grabbing;user-select:none}
+.bigpv .foot{margin-top:10px}
