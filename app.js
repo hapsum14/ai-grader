@@ -1140,7 +1140,7 @@ function vPages(kid) {
       <span class="sp"></span><label>쪽 번호 <input class="in num" id="pmto" type="number" min="1" max="${cls.pages.length}" placeholder="몇"></label>
       <button class="btn sm" data-act="pmove" data-w="before">그 쪽 앞으로</button><button class="btn sm" data-act="pmove" data-w="after">그 쪽 뒤로</button>
       <button class="btn sm" data-act="protsel" data-d="270" title="왼쪽으로 90°">↺</button><button class="btn sm" data-act="protsel" data-d="90" title="오른쪽으로 90°">↻ 돌리기</button><button class="btn sm" data-act="protsel" data-d="180">180°</button>
-      <button class="btn sm" data-act="pskip" title="채점에서만 빼기(그림은 남음)">빼기</button><button class="btn sm danger" data-act="pdel" title="고른 쪽 그림을 지워요(Ctrl+Z 되돌리기)">${ic('trash')}지우기</button><button class="btn sm ghost" data-act="pclear">고르기 풀기</button></div>`;
+      <button class="btn sm" data-act="pskip" title="채점에서만 빼기(그림은 남음)">빼기</button><button class="btn sm danger" data-act="pdel" title="고른 쪽 그림을 지워요(Ctrl+Z 되돌리기)">${ic('trash')}지우기</button><button class="btn sm ghost" data-act="pall" title="Ctrl+A">모두 고르기</button><button class="btn sm ghost" data-act="pclear" title="Esc · 빈 곳 누르기">고르기 풀기</button></div>`;
   after = () => {
     loadThumbs();
     $$('[data-act="setno"]').forEach(el => el.addEventListener('change', () => {
@@ -1181,10 +1181,23 @@ function vPages(kid) {
     ${over.length ? `<p class="note" style="margin-top:12px">답안이 학생 수보다 많아요(${over.map(s => s.no + '번').join(', ')}). 쪽 수나 빼야 할 쪽을 확인하세요.</p>` : ''}
     ${!cls.masks.length ? `<p class="note blue" style="margin-top:12px">AI 로 보내기 전에 <b>이름 칸 가리기</b>를 해 주세요.</p>` : ''}
   </div>
-  <p class="small muted" style="margin:0 0 8px">쪽을 <b>끌어서</b> 옮겨요. 이어붙인 학생은 <b>쪽들이 함께</b> 움직이고, 한 쪽만 옮기려면 네모로 고른 뒤 끌어요(또는 Alt+끌기). 여러 쪽은 왼쪽 위 네모(또는 <b>Ctrl·Shift + 누르기</b>)로 고른 뒤 함께 끌어요. 쪽의 <b>오른쪽</b>에 놓으면 그 학생에 붙고, 학생 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생으로 들어가요.</p>
+  <p class="small muted" style="margin:0 0 8px">쪽을 <b>끌어서</b> 옮겨요. 이어붙인 학생은 <b>쪽들이 함께</b> 움직이고, 한 쪽만 옮기려면 네모로 고른 뒤 끌어요(또는 Alt+끌기). 여러 쪽은 네모(또는 <b>Ctrl·Shift + 누르기</b>)로 골라 함께 끌고, <b>빈 곳</b>이나 <b>Esc</b>로 풀어요. <b>Ctrl+A</b> 모두 · <b>Delete</b> 지우기. 쪽의 <b>오른쪽</b>에 놓으면 그 학생에 붙고, 학생 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생으로 들어가요.</p>
   ${selBar}
   <div class="thumbs" id="thumbs">${thumbs}</div>`;
 }
+// 답안 나누기 화면: 빈 곳을 누르면 고르기 풀기, Esc 풀기, Ctrl+A 모두, Delete 지우기, Ctrl+클릭/Shift+클릭
+document.addEventListener('click', e => {
+  if (!/^#\/k\/[^/]+\/pages/.test(location.hash) || !G.psel || !G.psel.size) return;
+  if (e.target.closest('.th,.psel,button,a,input,select,textarea,label,details,#modal,#utoast,#top,.side')) return;
+  G.psel.clear(); G.plast = null; rerender();
+});
+document.addEventListener('keydown', e => {
+  if (!/^#\/k\/[^/]+\/pages/.test(location.hash) || !$('#modal').classList.contains('hide')) return;
+  if (e.target.closest && e.target.closest('input,textarea,select')) return;
+  if (e.key === 'Escape' && G.psel && G.psel.size) { e.preventDefault(); ACT.pclear(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); ACT.pall(); }
+  else if (e.key === 'Delete' && G.psel && G.psel.size) { e.preventDefault(); ACT.pdel(); }
+});
 // 쪽 고르기(Ctrl·Shift·네모) · 끌어 옮기기
 function pageDrag(cls) {
   const box = $('#thumbs'); if (!box) return;
@@ -1192,7 +1205,7 @@ function pageDrag(cls) {
   const idxOf = el => Number(el.dataset.pi);
   const toggle = (i, range) => {
     const id = cls.pages[i].id;
-    if (range && G.plast != null) { const [a, b] = [Math.min(G.plast, i), Math.max(G.plast, i)]; for (let k = a; k <= b; k++) sel.add(cls.pages[k].id); }
+    if (range && G.plast != null) { const [a, b] = [Math.min(G.plast, i), Math.max(G.plast, i)]; const off = sel.has(id); for (let k = a; k <= b; k++) { if (off) sel.delete(cls.pages[k].id); else sel.add(cls.pages[k].id); } }
     else if (sel.has(id)) sel.delete(id); else sel.add(id);
     G.plast = i; rerender();
   };
@@ -2601,7 +2614,8 @@ const ACT = {
     toast('오른쪽 아래에서 방향을 맞춰요. 그동안 다른 일을 해도 돼요.', 3000); orientJob(cls);
   },
   pskip() { const { cls } = gPages(); snap(`${G.psel.size}쪽 빼기`); cls.pages.forEach(p => { if (G.psel.has(p.id)) p.skip = true; }); G.psel.clear(); rebuildSubs(cls); save(); rerender(); },
-  pclear() { G.psel.clear(); rerender(); },
+  pclear() { G.psel.clear(); G.plast = null; rerender(); },
+  pall() { const { cls } = gPages(); cls.pages.forEach(p => G.psel.add(p.id)); rerender(); },
   pdel() {
     const { cls } = gPages(); const n = G.psel.size; if (!n) return;
     snap(`${n}쪽 지우기`); removePages(cls, p => G.psel.has(p.id)); G.psel.clear(); save(true); rerender();
