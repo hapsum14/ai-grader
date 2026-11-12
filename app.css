@@ -861,3 +861,14 @@ body.grading #tcredit{display:none}
 .bigpv .bigbox img{display:block;margin:0 auto;max-width:none;width:100%}
 .bigpv .bigbox.zoomed{cursor:grab} .bigpv .bigbox.drag{cursor:grabbing;user-select:none}
 .bigpv .foot{margin-top:10px}
+
+/* 이름 칸 가리기: 크게 보기 · 번호 */
+.mzbar{display:flex;align-items:center;gap:8px;margin:0 0 6px}
+.mzbar .kzoom{display:flex;align-items:center;gap:2px}
+.mzbar .kzoom .ibtn{font-size:18px;font-weight:700}
+.maskbox{height:min(68vh,760px);overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--bg2,#f4f4f6);text-align:center}
+.maskbox .maskwrap{display:inline-block;max-width:none;border:0;vertical-align:top}
+.maskbox .maskwrap img{width:100%;max-width:none;max-height:none}
+.maskwrap .mk{display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px;overflow:hidden;white-space:nowrap}
+.maskwrap .mk.drawing{color:transparent}
+.mkview{display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px;overflow:hidden;white-space:nowrap}

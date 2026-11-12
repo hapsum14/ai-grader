@@ -363,7 +363,7 @@ const Parse = (() => {
   }
 
   // 가림 영역을 칠한 그림(AI 로 보낼 것) → base64 jpeg
-  async function maskedBase64(blob, rects, maxSide = 1400) {
+  async function maskedBase64(blob, rects, maxSide = 1400, label) {
     const url = URL.createObjectURL(blob);
     try {
       const img = await loadImage(url);
@@ -373,7 +373,15 @@ const Parse = (() => {
       const ctx = c.getContext('2d');
       ctx.drawImage(img, 0, 0, c.width, c.height);
       ctx.fillStyle = '#000';
-      for (const r of rects || []) ctx.fillRect(r.x * c.width, r.y * c.height, r.w * c.width, r.h * c.height);
+      for (const r of rects || []) {
+        const x = r.x * c.width, y = r.y * c.height, w = r.w * c.width, h = r.h * c.height;
+        ctx.fillStyle = '#000'; ctx.fillRect(x, y, w, h);
+        if (label && w > 24 && h > 10) { // 가린 칸에 이름 대신 번호(No.01)
+          const fs = Math.max(10, Math.min(h * 0.6, w / (label.length * 0.62)));
+          ctx.fillStyle = '#fff'; ctx.font = `bold ${fs}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(label, x + w / 2, y + h / 2);
+        }
+      }
       const b = await canvasBlob(c, 'image/jpeg', 0.85);
       return await toBase64(await b.arrayBuffer());
     } finally { URL.revokeObjectURL(url); }

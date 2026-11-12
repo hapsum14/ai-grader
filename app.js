@@ -399,6 +399,7 @@ function splitEvery(cls, k) {
   cls.subs.forEach(s => s.fixed = false);
   rebuildSubs(cls);
 }
+const noLabel = no => 'No.' + String(no).padStart(2, '0');
 async function aiImages(cls, sub) {
   const out = [];
   for (let j = 0; j < sub.pages.length; j++) {
@@ -406,7 +407,7 @@ async function aiImages(cls, sub) {
     const blob = await getImg(p.id);
     if (!blob) throw new Error('쪽 그림이 없습니다. 반 화면에서 PDF 를 다시 연결해 주세요.');
     const rects = (cls.masks || []).filter(m => m.page === -1 || m.page === j);
-    out.push(await Parse.maskedBase64(blob, rects));
+    out.push(await Parse.maskedBase64(blob, rects, undefined, noLabel(sub.no)));
   }
   return out;
 }
@@ -1267,7 +1268,7 @@ function loadThumbs() {
 
 function maskModal(kid) {
   const { cls } = findClass(kid);
-  let si = 0, masks = JSON.parse(JSON.stringify(cls.masks || [])), scope = 0;
+  let si = 0, masks = JSON.parse(JSON.stringify(cls.masks || [])), scope = 0, mz = 1;
   const draw = async () => {
     const sub = cls.subs[si]; if (!sub) { toast('나뉜 답안이 없습니다.'); return; }
     const pi = Math.min(scope === -1 ? 0 : scope, sub.pages.length - 1);
@@ -1280,14 +1281,16 @@ function maskModal(kid) {
         <select class="in" id="mscope" style="width:auto">${sub.pages.map((_, j) => `<option value="${j}" ${scope === j ? 'selected' : ''}>각 학생 ${j + 1}쪽</option>`).join('')}<option value="-1" ${scope === -1 ? 'selected' : ''}>모든 쪽</option></select>
         <button class="btn sm danger" id="mclear">이 쪽 상자 모두 지우기</button>
       </div>
-      <div style="text-align:center"><div class="maskwrap" id="mw"><img id="mimg" alt=""></div></div>
+      <div class="mzbar"><span class="small faint">상자에는 이름 대신 <b>${noLabel(sub.no)}</b> 처럼 번호가 들어가요</span><span class="sp"></span>
+        <span class="kzoom"><button class="ibtn" id="mzo" title="작게">−</button><button class="btn sm ghost" id="mzf" title="폭에 맞추기">${Math.round(mz * 100)}%</button><button class="ibtn" id="mzi" title="크게">+</button></span></div>
+      <div class="maskbox" id="mbx"><div class="maskwrap" id="mw"><img id="mimg" alt="" draggable="false"></div></div>
       <div class="foot"><button class="btn" data-act="close">취소</button><button class="btn primary" id="msave">저장</button></div>`, true);
     $('#mimg').src = await imgURL(p.id);
     const mw = $('#mw');
     const paint = () => {
       $$('.mk', mw).forEach(e => e.remove());
       masks.filter(m => m.page === scope || m.page === -1 || (scope === -1)).forEach(m => {
-        const d = document.createElement('div'); d.className = 'mk';
+        const d = document.createElement('div'); d.className = 'mk'; d.textContent = noLabel(sub.no);
         Object.assign(d.style, { left: m.x * 100 + '%', top: m.y * 100 + '%', width: m.w * 100 + '%', height: m.h * 100 + '%' });
         mw.appendChild(d);
       });
@@ -1304,6 +1307,21 @@ function maskModal(kid) {
       if (m.w > 0.01 && m.h > 0.005) masks.push(m);
       paint();
     };
+    // 크게 보기(상자 그리기는 그대로, 넘기기는 휠·스크롤 막대)
+    const bx = $('#mbx'), mim = $('#mimg');
+    // 100% = 한 쪽이 상자 안에 다 보이는 크기
+    const fitW = () => { const r = bx.getBoundingClientRect(); const ar = (mim.naturalWidth || 1) / (mim.naturalHeight || 1); return Math.max(100, Math.min(r.width - 4, (r.height - 4) * ar)); };
+    const applyFit = () => { mw.style.width = Math.round(fitW() * mz) + 'px'; };
+    if (mim.complete && mim.naturalWidth) applyFit(); else mim.onload = applyFit;
+    const setZ = (nz, cx, cy) => {
+      nz = Math.max(1, Math.min(4, Math.round(nz * 100) / 100));
+      const r = bx.getBoundingClientRect(); const px = cx == null ? r.width / 2 : cx - r.left, py = cy == null ? r.height / 2 : cy - r.top;
+      const fx = (bx.scrollLeft + px) / (bx.scrollWidth || 1), fy = (bx.scrollTop + py) / (bx.scrollHeight || 1);
+      mz = nz; mw.style.width = Math.round(fitW() * mz) + 'px'; $('#mzf').textContent = Math.round(mz * 100) + '%';
+      bx.scrollLeft = fx * bx.scrollWidth - px; bx.scrollTop = fy * bx.scrollHeight - py;
+    };
+    $('#mzi').onclick = () => setZ(mz + 0.5); $('#mzo').onclick = () => setZ(mz - 0.5); $('#mzf').onclick = () => setZ(1);
+    bx.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); setZ(mz * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY); }, { passive: false });
     $('#mprev').onclick = () => { si = Math.max(0, si - 1); draw(); };
     $('#mnext').onclick = () => { si = Math.min(cls.subs.length - 1, si + 1); draw(); };
     $('#mscope').onchange = e => { scope = Number(e.target.value); draw(); };
@@ -1616,6 +1634,7 @@ function vGrade(kid, no) {
         const wrap = $('#vwrap');
         (cls.masks || []).filter(m => m.page === -1 || m.page === G.page).forEach(m => {
           const d = document.createElement('div');
+          d.className = 'mkview'; d.textContent = noLabel(no);
           Object.assign(d.style, { position: 'absolute', background: '#000', left: m.x * 100 + '%', top: m.y * 100 + '%', width: m.w * 100 + '%', height: m.h * 100 + '%', transform: `rotate(${G.rot}deg)` });
           wrap.appendChild(d);
         });
