@@ -369,9 +369,21 @@ async function autoOrient(cls, onMsg) {
   return turned;
 }
 // 끄는 동안 쪽 위에 보일 말
-function groupHint(cls, i, right, g) {
+// 같은 학생 안에서 쪽 순서 바꾸기: 그 학생 쪽들의 자리는 그대로 두고 순서만 바꾼다(첫 자리가 늘 학생의 첫 쪽)
+function reorderInGroup(cls, g, from, to, after) {
+  if (from == null || from === to) return false;
+  const pos = g.pages.slice(); const objs = pos.map(i => cls.pages[i]);
+  const f = pos.indexOf(from), t0 = pos.indexOf(to); if (f < 0 || t0 < 0) return false;
+  const [m] = objs.splice(f, 1); let t = objs.indexOf(cls.pages[to]) + (after ? 1 : 0); objs.splice(t, 0, m);
+  if (objs.every((p, k) => p === cls.pages[pos[k]])) return false;
+  pos.forEach((i, k) => { cls.pages[i] = objs[k]; });
+  rebuildSubs(cls);
+  return true;
+}
+function groupHint(cls, i, right, g, from) {
   const tx = cls.subs.find(x => x.pages.includes(i));
-  if (!tx || tx === g) return '같은 학생';
+  if (tx && tx === g) return i === from ? '같은 쪽' : `${g.no}번 안에서 ${right ? '뒤로' : '앞으로'} 순서 바꾸기`;
+  if (!tx) return '같은 학생';
   return `${tx.no}번 학생 ${right ? '뒤로' : '앞으로'}`;
 }
 function dropHint(cls, i, right) {
@@ -1190,13 +1202,14 @@ function pageDrag(cls) {
     const th = e.target.closest('.th');
     if (th && (e.ctrlKey || e.metaKey || e.shiftKey) && !e.target.closest('button,input')) { e.preventDefault(); e.stopPropagation(); toggle(idxOf(th), e.shiftKey); }
   }, true);
-  let drag = null, mark = null; var dragGroup = null;
+  let drag = null, mark = null; var dragGroup = null, dragFrom = null;
   const clearMark = () => { if (mark) { mark.classList.remove('dropL', 'dropR'); delete mark.dataset.drop; } mark = null; };
   box.addEventListener('dragstart', e => {
     const th = e.target.closest('.th'); if (!th || e.target.closest('input')) return;
     const i = idxOf(th);
     // 고른 쪽이 아니면 그 학생의 쪽을 모두 함께(한 쪽만 옮기려면 네모로 골라서 끌기)
     const grp = !sel.has(cls.pages[i].id) && !e.altKey ? cls.subs.find(x => x.pages.includes(i)) : null;
+    dragFrom = i;
     if (grp && grp.pages.length > 1) { sel.clear(); grp.pages.forEach(k => sel.add(cls.pages[k].id)); dragGroup = grp; }
     else { dragGroup = null; if (!sel.has(cls.pages[i].id)) { sel.clear(); sel.add(cls.pages[i].id); } }
     drag = cls.pages.map((p, k) => sel.has(p.id) ? k : -1).filter(k => k >= 0);
@@ -1209,7 +1222,7 @@ function pageDrag(cls) {
     e.preventDefault(); e.dataTransfer.dropEffect = 'move';
     const r = th.getBoundingClientRect(), right = e.clientX > r.left + r.width / 2;
     if (mark !== th) clearMark(); mark = th;
-    th.classList.toggle('dropR', right); th.classList.toggle('dropL', !right); th.dataset.drop = dragGroup ? groupHint(cls, idxOf(th), right, dragGroup) : dropHint(cls, idxOf(th), right);
+    th.classList.toggle('dropR', right); th.classList.toggle('dropL', !right); th.dataset.drop = dragGroup ? groupHint(cls, idxOf(th), right, dragGroup, dragFrom) : dropHint(cls, idxOf(th), right);
     // 끄는 동안 화면 끝에 가면 저절로 넘김
     const sc = document.scrollingElement, m = 70; const main = th.closest('.main, main, #main') || sc;
     if (e.clientY < m) (main.scrollBy ? main : sc).scrollBy(0, -18); else if (e.clientY > innerHeight - m) (main.scrollBy ? main : sc).scrollBy(0, 18);
@@ -1222,10 +1235,11 @@ function pageDrag(cls) {
     if (!th) return rerender();
     let hint = dropHint(cls, idxOf(th), right), moved;
     snap(`${list.length}쪽 옮기기`);
-    if (dragGroup) { // 학생 묶음: 놓은 학생의 앞이나 뒤에 새 학생으로
+    if (dragGroup) { // 학생 묶음: 놓은 학생의 앞이나 뒤에 새 학생으로. 같은 학생 안이면 그 쪽의 순서만 바꾼다
       const tx = cls.subs.find(x => x.pages.includes(idxOf(th)));
-      hint = groupHint(cls, idxOf(th), right, dragGroup);
-      moved = tx && tx !== dragGroup ? movePages(cls, list, right ? tx.pages[tx.pages.length - 1] : tx.pages[0], right, true) : false;
+      hint = groupHint(cls, idxOf(th), right, dragGroup, dragFrom);
+      if (tx && tx === dragGroup) moved = reorderInGroup(cls, dragGroup, dragFrom, idxOf(th), right);
+      else moved = tx ? movePages(cls, list, right ? tx.pages[tx.pages.length - 1] : tx.pages[0], right, true) : false;
       dragGroup = null;
     } else moved = movePages(cls, list, idxOf(th), right);
     if (!moved) UNDO.stack.pop(), renderUndo();
