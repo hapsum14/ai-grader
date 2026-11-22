@@ -26,7 +26,7 @@ const AI = (() => {
   function resetAt() { const now = new Date(), p = ptParts(now); const left = ((24 - p.hour) * 3600 - p.minute * 60 - p.second) * 1000; return new Date(Math.round((now.getTime() + left) / 60000) * 60000); }
   function usageToday() { let u = null; try { u = JSON.parse(localStorage.getItem(UK) || 'null'); } catch (e) {} if (!u || u.day !== today()) u = { day: today(), m: {} }; return u; }
   function useSave(u, ev) { try { localStorage.setItem(UK, JSON.stringify(u)); } catch (e) {} useL.forEach(f => { try { f(u, ev); } catch (e) {} }); }
-  const tierName = m => { const d = describe(m); return d.tier === 'flash-lite' ? 'Flash-Lite' : d.tier === 'pro' ? 'Pro' : d.tier === 'flash' ? 'Flash' : m; };
+  const tierName = m => { if (m === 'gemini-4-hydrogen') return 'Gemini 4 Hydrogen'; const d = describe(m); return d.tier === 'flash-lite' ? 'Flash-Lite' : d.tier === 'pro' ? 'Pro' : d.tier === 'flash' ? 'Flash' : m; };
   function useRow(u, model) { const k = tierName(model); return (u.m[k] = u.m[k] || { n: 0, tin: 0, tout: 0 }); }
   function useAdd(model, um) { const u = usageToday(); const x = useRow(u, model); x.n++; if (um) { x.tin += Number(um.promptTokenCount) || 0; x.tout += (Number(um.candidatesTokenCount) || 0) + (Number(um.thoughtsTokenCount) || 0); } if (x.limit === 'minute') delete x.limit; useSave(u); }
   function useLimit(model, kind, next) { const u = usageToday(); const x = useRow(u, model); x.limit = kind; x.limitAt = Date.now(); useSave(u, { model: tierName(model), kind, next: next && tierName(next) }); }
@@ -201,10 +201,10 @@ const AI = (() => {
   function fallback(model, tried, fast) {
     let ids = [];
     try { ids = JSON.parse(localStorage.getItem('aigrader-models') || '[]'); } catch (e) {}
-    ids = ['gemini-flash-latest', 'gemini-flash-lite-latest'].concat(ids.filter(i => describe(i).ver >= 3));
+    ids = ['gemini-flash-latest', HYD, 'gemini-flash-lite-latest'].concat(ids.filter(i => describe(i).ver >= 3 && i !== HYD));
     const cur = describe(model);
     const plain = /^gemini-(\d+(\.\d+)?-(pro|flash|flash-lite)(-\d{3})?|(pro|flash|flash-lite)-latest)$/;
-    const ok = d => !tried.includes(d.id) && plain.test(d.id) && (d.latest || (d.ver >= 3 && !d.preview)) && !dayLimited(d.id) &&
+    const ok = d => !tried.includes(d.id) && (plain.test(d.id) || d.id === HYD) && (d.latest || d.id === HYD || (d.ver >= 3 && !d.preview)) && !dayLimited(d.id) &&
       (d.tier === 'flash' || d.tier === 'flash-lite' || (d.tier === 'pro' && cur.tier === 'pro'));
     const list = sortModels(ids).filter(ok);
     // fast: 답이 늦을 때 — 생각하기가 짧은 Flash-Lite 를 먼저
@@ -221,7 +221,9 @@ const AI = (() => {
   }
 
   // 모델 이름 → { id, ver, tier, preview, latest, label, note }
+  const HYD = 'gemini-4-hydrogen';
   function describe(id) {
+    if (id === HYD) return { id, ver: 4, tier: 'flash', preview: false, latest: false, label: 'Gemini 4 Hydrogen (Flash 급)', note: '3.8 Flash 와 한도가 같은 Gemini 4 · Flash 와 번갈아 써서 하루 한도를 늘림' };
     const m = id.match(/^gemini-(\d+(?:\.\d+)?)-(pro|flash-lite|flash)(.*)$/);
     const alias = id.match(/^gemini-(pro|flash-lite|flash)-latest$/);
     const tierName = { pro: 'Pro', flash: 'Flash', 'flash-lite': 'Flash-Lite' };
@@ -375,7 +377,15 @@ const AI = (() => {
 
   // ================= 정확도 위주 채점: 정답표(형별) → 읽기 → 판단(두 번) =================
   // 채점 방식(설정): 정확하게 = 읽기·세특 Flash, 정답표·판단 Flash 깊게, 확인용 판단 Flash-Lite / 빠르게 = 고른 모델, 생각 낮게
-  const MODELS = { flash: 'gemini-flash-latest', lite: 'gemini-flash-lite-latest' };
+  const MODELS = { flash: 'gemini-flash-latest', lite: 'gemini-flash-lite-latest', hyd: 'gemini-4-hydrogen' };
+  // Flash 급 두 모델 가운데 오늘 한도가 남았고 덜 쓴 쪽. 둘 다 막혔으면 Flash-Lite
+  function flashPick() {
+    const u = usageToday();
+    const c = [MODELS.flash, MODELS.hyd].filter(m => !dayLimited(m));
+    if (!c.length) return MODELS.lite;
+    c.sort((a, b) => ((u.m[tierName(a)] || {}).n || 0) - ((u.m[tierName(b)] || {}).n || 0));
+    return c[0];
+  }
   function plan() {
     const s = cfg(), mode = s.mode || 'auto';
     if (mode === 'accurate') return {
@@ -384,7 +394,8 @@ const AI = (() => {
     };
     if (mode === 'fast') { const m = s.model; return { key: { model: m, think: 'low' }, read: { model: m, think: 'low' }, judge: { model: m, think: 'low' }, judge2: null, seteuk: { model: m, think: 'low' } }; }
     // 자동(무료 버전 기본): 정답표는 형마다 한 번 Flash 로 꼼꼼히, 답 읽기·세특은 빠른 Flash-Lite, 기준 판단만 Flash(글만 보내 빠름)
-    return { key: { model: MODELS.flash, think: 'medium' }, read: { model: MODELS.lite, think: 'low' }, judge: { model: MODELS.flash, think: 'low' }, judge2: null, seteuk: { model: MODELS.flash, think: 'low' } };
+    // 자동: 정답표·판단·세특(정확도) = Flash 와 Gemini 4 Hydrogen 을 번갈아, 답 읽기 = Flash-Lite
+    return { key: { model: flashPick(), think: 'medium' }, read: { model: MODELS.lite, think: 'low' }, judge: { model: flashPick(), think: 'low' }, judge2: null, seteuk: { model: flashPick(), think: 'low' } };
   }
 
   // 1) 정답표: 시험지(첫 답안지)를 읽고 형, 문항별 정답, 기준↔문항 대응, 판단 지침
@@ -437,7 +448,7 @@ const AI = (() => {
 - 표본 학생들의 답이 서로 다른데, 각자 받은 조건(시료·시약 번호, 모둠 재료, 자기 측정값·관찰 결과)이 달라서 그런 것이면 student 입니다. 이때 정답표의 정답은 한 학생 것일 뿐이니 rule 에 '학생이 적은 조건·관찰에서 결론을 올바르게 끌어냈는지'를 이 문항에 맞게 구체적으로 적습니다.
 - 학생 답이 달라도 그냥 틀린 답이 섞인 것이면 fixed 입니다.
 - 의견·설계·논술처럼 여러 답이 맞을 수 있으면 open 이고, rule 에 꼭 들어가야 할 요소를 적습니다.` });
-    return call({ system: '너는 수행평가 문항을 분석하는 교사 조수다. 학생 답의 옳고 그름이 아니라 문항의 정답 구조를 판단한다.', parts, schema: CLASSIFY_SCHEMA, temperature: 0, signal, think: 'low', _model: MODELS.flash });
+    return call({ system: '너는 수행평가 문항을 분석하는 교사 조수다. 학생 답의 옳고 그름이 아니라 문항의 정답 구조를 판단한다.', parts, schema: CLASSIFY_SCHEMA, temperature: 0, signal, think: 'low', _model: flashPick() });
   }
 
   // 0) 쪽 방향: 작게 줄인 그림(이름은 읽히지 않는 크기)으로 글자가 바로 서려면 몇 도 돌려야 하는지

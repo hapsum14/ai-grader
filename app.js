@@ -2151,6 +2151,7 @@ function pendAdd(j) { if (!j.kind) return; pendSet(pendGet().filter(x => x.key !
 function pendDel(key) { pendSet(pendGet().filter(x => x.key !== key)); }
 function leftFor(p) {
   const { task, cls } = findClass(p.clsId); if (!cls) return 0;
+  if (Array.isArray(p.left)) return p.left.length;
   let n = 0;
   for (let no = 1; no <= cls.size; no++) {
     const st = statusOf(cls, no), s = cls.students[no];
@@ -2166,6 +2167,10 @@ function resumeJobs() {
     JOBS.push({ id: uid(), key: p.key, title: p.title.replace(/ — \d+명$/, ''), resume: p, left: leftFor(p), done: true, ok: 0, fail: 0, log: [], total: 0 });
   });
   renderJobs();
+  // 한도를 기다리던 작업은 앱을 다시 열면 저절로 이어서(키가 있을 때)
+  if ((App.settings().apiKey || '').trim()) setTimeout(() => {
+    JOBS.filter(x => x.resume && x.resume.wait).forEach(x => { toast(`${x.title}: 한도 대기 중이던 작업을 이어서 해요.`, 3500); ACT.jobresume({ dataset: { j: x.id } }); });
+  }, 4000);
 }
 function renderJobs() {
   let box = $('#jobs');
@@ -2173,14 +2178,14 @@ function renderJobs() {
   box.innerHTML = JOBS.map(j => {
     if (j.resume) return `<div class="job resume">
       <div class="jh"><b>${esc(j.title)}</b><span class="sp"></span><button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button></div>
-      <div class="jm">지난번에 창을 닫아 멈췄습니다 · 남은 ${j.left}명</div>
+      <div class="jm">${j.resume.wait ? '한도를 기다리다 창이 닫혔어요' : '지난번에 창을 닫아 멈췄습니다'} · 남은 ${j.left}명</div>
       <div class="row" style="gap:6px"><button class="btn sm primary" data-act="jobresume" data-j="${j.id}">이어서 하기</button>
         <a class="btn sm" href="#/k/${j.resume.clsId}">반 화면</a></div></div>`;
     const n = j.ok + j.fail, pct = j.total ? Math.round(n / j.total * 100) : 0;
     const head = j.done && j.doneMsg ? j.doneMsg : j.done ? (j.stopped ? '멈춤' : '끝') + ` — 성공 ${j.ok}, 실패 ${j.fail}`
       : j.phase || `${n}/${j.total}명 · 성공 ${j.ok}${j.fail ? ', 실패 ' + j.fail : ''}`;
     if (j.one) return `<div class="job${j.done ? ' done' : ''}">
-      <div class="jh"><span class="spin${j.done ? ' hide' : ''}"></span><b>${esc(j.title)}</b><span class="sp"></span>${j.done ? `<button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button>` : ''}</div>
+      <div class="jh"><span class="spin${j.done ? ' hide' : ''}"></span><b>${esc(j.title)}</b><span class="sp"></span>${j.done ? `<button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button>` : j.waitKind ? `<button class="btn sm" data-act="jobstop" data-j="${j.id}">멈추기</button>` : ''}</div>
       <div class="jm">${esc(head)}${j.where && location.hash !== j.where ? ` · <a href="${j.where}">반 화면</a>` : ''}</div>
       ${j.done ? (j.onBtn ? `<div class="row" style="gap:6px;margin-top:6px"><button class="btn sm primary" data-act="jobbtn" data-j="${j.id}">${esc(j.btnLabel || '열기')}</button></div>` : '') : '<div class="prog indet"><i></i></div>'}</div>`;
     return `<div class="job${j.done ? ' done' : ''}">
@@ -2211,8 +2216,14 @@ function bgJob(o) {
   const j = { id: uid(), key: o.key, title: o.title, total: 0, ok: 0, fail: 0, log: [], done: false, open: false, where: o.where || '', phase: o.phase || '준비 중…', ctl: new AbortController(), one: true };
   JOBS.push(j); BUSY++; renderJobs();
   j.promise = (async () => {
-    try { await o.run(j); }
-    catch (e) { j.fail = 1; j.doneMsg = '못 했어요: ' + e.message; toast(`${o.title}: ${e.message}`, 5000); }
+    try { for (let tryN = 0; ; tryN++) {
+      try { await o.run(j); break; }
+      catch (e) {
+        const kind = quotaKind(e.message);
+        if (kind && tryN < 6 && !j.ctl.signal.aborted) { j.left = []; await waitQuota(j, kind); if (!j.ctl.signal.aborted) continue; } // 한도면 기다렸다 다시
+        j.fail = 1; j.doneMsg = '못 했어요: ' + e.message; toast(`${o.title}: ${e.message}`, 5000); break;
+      }
+    } }
     finally {
       BUSY--; j.done = true; j.phase = ''; renderJobs();
       if (!j.fail && !j.onBtn) setTimeout(() => { const k = JOBS.indexOf(j); if (k >= 0) { JOBS.splice(k, 1); renderJobs(); } }, 15000);
@@ -2254,6 +2265,38 @@ function keyJob(task, cls, then) {
     }
   } });
 }
+// 한도 오류의 종류: minute(분당) · day(하루) · spend(월 지출 한도) · null(한도 아님)
+function quotaKind(msg) {
+  msg = String(msg || '');
+  if (/지출 한도|spending cap/i.test(msg)) return 'spend';
+  if (/오늘|하루|daily|per day/i.test(msg) && /한도|quota|limit/i.test(msg)) return 'day';
+  if (/한도|quota|rate limit|429|RESOURCE_EXHAUSTED/i.test(msg)) return 'minute';
+  return null;
+}
+// 한도가 풀릴 때까지 기다린다(분당 1분, 하루·월 한도는 5분마다 다시 시도). 멈추기를 누르면 그만
+async function waitQuota(j, kind) {
+  const until = kind === 'minute' ? Date.now() + 65000 : Date.now() + 5 * 60000;
+  const what = kind === 'minute' ? '분당 한도' : kind === 'day' ? `하루 한도(${AI.resetAt().toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}에 다시 채워짐)` : '이번 달 지출 한도';
+  j.waitKind = kind;
+  await new Promise(res => {
+    const tick = () => {
+      if (j.ctl.signal.aborted) { clearInterval(t); res(); return; }
+      const left = Math.max(0, until - Date.now()), mm = Math.floor(left / 60000), ss = Math.round(left % 60000 / 1000);
+      j.phase = `⏳ ${what}에 걸려 기다리는 중 — ${mm ? mm + '분 ' : ''}${ss}초 뒤 이어서 (성공 ${j.ok} · 남은 ${j.left.length}명)`;
+      renderJobs();
+      if (!left) { clearInterval(t); res(); }
+    };
+    const t = setInterval(tick, 1000); tick();
+  });
+  j.phase = ''; j.waitKind = null; renderJobs();
+}
+// 남은 학생을 적어 둔다(창을 닫았다 열어도 그 학생부터 이어서)
+function pendLeft(j, wait) {
+  if (!j.kind) return;
+  const a = pendGet(); const p = a.find(x => x.key === j.key); if (!p) return;
+  p.left = (j.left || []).slice(); if (wait != null) p.wait = !!wait;
+  pendSet(a);
+}
 async function runBatch(title, items, fn, opt = {}) {
   const j = { id: uid(), key: opt.key || title, title, total: items.length, ok: 0, fail: 0, log: [], done: false, stopped: false,
     open: false, ctl: new AbortController(), where: opt.where || '', phase: '' };
@@ -2262,12 +2305,23 @@ async function runBatch(title, items, fn, opt = {}) {
   toast('오른쪽 아래에서 진행합니다. 그동안 다른 화면에서 일해도 됩니다.', 3000);
   try {
     if (opt.pre) { j.phase = opt.preMsg || '준비 중…'; renderJobs(); await opt.pre(j); j.phase = ''; renderJobs(); }
-    let i = 0;
+    const q = items.slice(); j.left = q;
+    let waiting = null; // 한도 대기 중이면 두 일꾼이 함께 기다린다
     const worker = async () => {
-      while (i < items.length && !j.ctl.signal.aborted) {
-        const it = items[i++];
+      while (q.length && !j.ctl.signal.aborted) {
+        if (waiting) { await waiting; continue; }
+        const it = q.shift(); pendLeft(j);
         try { const m = await fn(it, j.ctl.signal); j.ok++; j.log.push(`${it}번 완료${m ? ' — ' + m : ''}`); }
-        catch (e) { if (e.name === 'AbortError') break; j.fail++; j.log.push(`${it}번 실패: ${e.message}`); if (/키|한도|모델/.test(e.message)) j.ctl.abort(); }
+        catch (e) {
+          if (e.name === 'AbortError') break;
+          const kind = quotaKind(e.message);
+          if (kind) { // 한도: 그 학생을 다시 맨 앞에 두고 기다렸다가 이어서
+            q.unshift(it); pendLeft(j, true);
+            if (!waiting) { j.log.push(`${it}번에서 한도 대기: ${e.message}`); waiting = waitQuota(j, kind).finally(() => { waiting = null; pendLeft(j, false); }); }
+            await waiting; continue;
+          }
+          j.fail++; j.log.push(`${it}번 실패: ${e.message}`); if (/키|모델/.test(e.message)) j.ctl.abort();
+        }
         renderJobs(); if (opt.clsId) softRefresh(opt.clsId, it);
       }
     };
@@ -2342,7 +2396,7 @@ function settingsModal() {
       <p class="small faint" style="margin:10px 0 0">무료 키로 보낸 답안은 Google 이 서비스 개선에 쓸 수 있어요. 이름 칸 가리기를 꼭 하세요.</p>
     </div>
     <div class="foot"><button class="btn" data-act="close">닫기</button><button class="btn primary" id="ssave">저장</button></div>`);
-  const MN = { auto: '무료 키에 맞춘 절충: 답 읽기·세특은 Flash-Lite(빠름), 기준 판단은 Flash(정확) · 채점 1명 약 8~10초, 세특 약 3~5초 · 무료 한도를 넘으면 저절로 다른 모델로', accurate: '모두 Flash, 판단은 깊게 생각하고 한 번 더 확인 · 1명 약 20~40초 · 무료 한도를 빨리 씀', fast: '아래에서 고른 모델 하나로 빠르게 · 1명 약 5초 · 애매한 판단이 늘 수 있어요' };
+  const MN = { auto: '정확도가 필요한 판단·정답표·세특은 Flash 와 Gemini 4 Hydrogen 을 번갈아(하루 한도를 두 배로), 답 읽기는 Flash-Lite · 한쪽이 한도에 닿으면 다른 쪽으로, 둘 다 막히면 Flash-Lite', accurate: '모두 Flash, 판단은 깊게 생각하고 한 번 더 확인 · 1명 약 20~40초 · 무료 한도를 빨리 씀', fast: '아래에서 고른 모델 하나로 빠르게 · 1명 약 5초 · 애매한 판단이 늘 수 있어요' };
   const modeNote = () => { $('#smodenote').textContent = MN[$('#smode button.on').dataset.m]; };
   $$('#smode button').forEach(b => b.onclick = () => { $$('#smode button').forEach(x => x.classList.toggle('on', x === b)); modeNote(); });
   modeNote();
@@ -2792,7 +2846,8 @@ const ACT = {
   jobresume(el) {
     const k = JOBS.findIndex(x => x.id === el.dataset.j); if (k < 0) return;
     const p = JOBS[k].resume; JOBS.splice(k, 1); pendDel(p.key); renderJobs();
-    ACT[p.kind === 'grade' ? 'batchgrade' : 'batchseteuk']({ dataset: { id: p.clsId } });
+    const only = Array.isArray(p.left) && p.left.length ? p.left : undefined; // 남은 학생부터
+    ACT[p.kind === 'grade' ? 'batchgrade' : 'batchseteuk']({ dataset: { id: p.clsId } }, only ? 'again' : undefined, only);
   },
   qtostudent(el) {
     const { course, task, cls } = findClass(el.dataset.id); task._subject = course.name; const q = el.dataset.q;
