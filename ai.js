@@ -54,8 +54,21 @@ const AI = (() => {
     } catch (e) { return 'err'; }
   }
   const dayLimited = m => { const l = (usageToday().m[tierName(m)] || {}).limit; return l === 'day' || l === 'spend'; };
+  const LK = 'aigrader-rpm';
+  const keyTag = () => ((cfg().apiKey || '').trim().slice(-6));
+  function learned() { try { const l = JSON.parse(localStorage.getItem(LK) || '{}'); return l.k === keyTag() ? l : { k: keyTag(), m: {} }; } catch (e) { return { k: keyTag(), m: {} }; } }
+  function capFor(model) {
+    const base = RPM[describe(model).tier] || 9, x = learned().m[model];
+    if (!x) return base;
+    return Math.min(base, x.cap + Math.floor((Date.now() - x.at) / 300000)); // 5분마다 1씩 회복
+  }
+  function learnCap(model) {
+    const n = (sent[model] || []).filter(t => Date.now() - t < 60000).length;
+    const l = learned(); l.m[model] = { cap: Math.max(2, Math.min(capFor(model), n) - 1), at: Date.now() };
+    try { localStorage.setItem(LK, JSON.stringify(l)); } catch (e) {}
+  }
   async function throttle(model, signal) {
-    const cap = RPM[describe(model).tier] || 9;
+    const cap = capFor(model);
     const a = sent[model] = (sent[model] || []).filter(t => Date.now() - t < 60000);
     if (a.length >= cap) { await sleep(60000 - (Date.now() - a[0]) + 300, signal); return throttle(model, signal); }
     a.push(Date.now());
@@ -172,7 +185,9 @@ const AI = (() => {
         const det = JSON.stringify((errj && errj.details) || []) + ' ' + msg;
         const perDay = /PerDay|per day|daily/i.test(det);
         const rd = Number((det.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/) || [])[1]);
-        if (!perDay) { // 여유 있는 다른 모델이 있으면 기다리지 않고 바로 바꿈
+        if (!perDay) learnCap(model); // 다음부터는 1분에 그보다 적게 보낸다
+        // 분당 한도: Flash-Lite 는 잠깐 기다렸다 그대로(Flash 의 적은 하루 한도를 아낌), 다른 모델은 여유 있는 모델로 바로
+        if (!perDay && describe(model).tier !== 'flash-lite') {
           const alt = fallback(model, tried);
           if (alt) {
             useLimit(model, 'minute', alt, Date.now() + Math.min(60, rd || 60) * 1000);
