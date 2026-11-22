@@ -92,7 +92,7 @@ const AI = (() => {
     if (tc) body.generationConfig.thinkingConfig = tc;
     const stream = typeof opts.onText === 'function';
     // 오늘 무료 한도를 다 쓴 모델이면 처음부터 다른 모델로
-    if (dayLimited(model)) { const nx = fallback(model, tried); if (nx) return call(Object.assign({}, opts, { _model: nx, _tried: tried.concat(nx), _noThink: false }), retried); }
+    if (dayLimited(model)) { const nx = fallback(model, tried); if (nx) opts.onWait && opts.onWait(0, describe(nx).label, 'day'); if (nx) return call(Object.assign({}, opts, { _model: nx, _tried: tried.concat(nx), _noThink: false }), retried); }
     let wait = 2000;
     for (let attempt = 0; ; attempt++) {
       await throttle(model, signal);
@@ -459,7 +459,7 @@ const AI = (() => {
       guide: S('판단 기준: 충족으로 볼 핵심 요소, 부분 인정 여부'),
     })),
   });
-  async function makeKey(task, images) {
+  async function makeKey(task, images, onWait) {
     if (isMock()) return {
       form: 'C형',
       answers: ['1', '2', '3-1', '3-2', '4-1', '4-2', '4-3', '5-1', '5-2', '5-3', '6'].map(no => ({ no, question: `(모의) ${no}번 문항`, answer: `(모의) ${no}번 정답` })),
@@ -473,7 +473,7 @@ const AI = (() => {
     return call({ system: `너는 고등학교 과학 수행평가의 정답표를 만드는 교사 조수다.
 - 문항을 직접 풀어 정답을 정한다. 그래프는 축과 곡선의 최댓값·교차점을 꼼꼼히 읽는다(예: 저해제가 있어도 최대 속도가 같으면 경쟁적 저해, 최대 속도가 낮아지면 비경쟁적 저해).
 - 표·그림 속 기호(A, B, (가) 등)는 이 시험지에 실제로 있는 것만 쓴다. 다른 시험지의 기호를 지어내지 않는다.
-- 채점 기준 번호와 문항 번호는 같지 않을 수 있다. 기준 문장의 내용과 문항이 묻는 것을 맞춰 대응을 정한다.`, parts, schema: KEY_SCHEMA, temperature: 0.1, think: P.think, _model: P.model });
+- 채점 기준 번호와 문항 번호는 같지 않을 수 있다. 기준 문장의 내용과 문항이 묻는 것을 맞춰 대응을 정한다.`, parts, schema: KEY_SCHEMA, temperature: 0.1, think: P.think, _model: P.model, onWait });
   }
 
   // 1-2) 문항 유형: 표본 학생 여럿의 답을 비교해 정답이 모두 같은 문항인지, 학생 조건·자료에 따라 다른지, 열린 답인지

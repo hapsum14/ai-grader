@@ -1933,15 +1933,21 @@ async function makeKeyFor(task, cls, onPhase) {
   }
   const sm = sampleSub(task, cls);
   const imgs = sm ? await aiImages(sm.k, sm.sub) : [];
-  const r = await AI.makeKey(task, imgs);
+  // 모델을 바꾸거나 기다리면 작업 카드에 그대로 알림(멈춘 것이 아님을 알 수 있게)
+  const r = await AI.makeKey(task, imgs, (sec, alt, why) => onPhase && onPhase(alt
+    ? `${why === 'day' ? '오늘 한도라' : why === 'quota' ? '분당 한도라' : why === 'slow' ? '답이 늦어' : '바빠서'} ${alt} 로 정답표 만드는 중…`
+    : `${why === 'quota' ? '분당 한도' : '서버가 바빠'} — ${sec}초 뒤 다시 시도`));
   if (!cls.form) cls.form = normForm(r.form);
   cls.formChecked = true;
   const f = formOf(cls);
   task.keys = task.keys || {};
   if (!task.keys[f]) {
     task.keys[f] = keyFromAI(task, r, cls.name, sm ? { k: sm.k.id, no: sm.sub.no } : null);
-    onPhase && onPhase('학생 몇 명의 답을 비교해 문항 유형을 확인 중… (10초 안팎)');
-    await classifyKey(task, task.keys[f], sm ? sm.k : cls).catch(e => { task.keys[f].typeErr = e.message; });
+    onPhase && onPhase('학생 몇 명의 답을 비교해 문항 유형을 확인 중… (최대 1분)');
+    // 유형 정하기는 덤: 1분 안에 못 하면(한도·다른 채점과 겹침) 건너뛰고 정답표부터 보여 준다(정답표 창에서 다시 할 수 있음)
+    const ac = new AbortController(); const tm = setTimeout(() => ac.abort(), 60000);
+    await classifyKey(task, task.keys[f], sm ? sm.k : cls, ac.signal).catch(e => { task.keys[f].typeErr = ac.signal.aborted ? '시간이 오래 걸려 건너뛰었어요' : e.message; });
+    clearTimeout(tm);
   }
   save(); return task.keys[f];
 }
@@ -1967,7 +1973,7 @@ function qSuspect(task, cls) {
   });
   cls.qflags = flags; return n;
 }
-async function classifyKey(task, key, cls) {
+async function classifyKey(task, key, cls, signal) {
   const subs = cls.subs.filter(x => !(cls.students[x.no] || {}).status);
   if (subs.length < 2) return;
   const idx = [...new Set([0, Math.floor(subs.length / 3), Math.floor(subs.length * 2 / 3), subs.length - 1])];
@@ -1975,10 +1981,10 @@ async function classifyKey(task, key, cls) {
   const samples = (await Promise.all(idx.map(async i => {
     const x = subs[i], s = cls.students[x.no];
     if (s && s.ai && s.ai.answers && s.ai.answers.length) return s.ai.answers; // 이미 읽은 학생은 다시 읽지 않음
-    try { return ((await AI.read(await aiImages(cls, x), nos)).answers || []).map(a => ({ no: String(a.no || '').replace(/번/g, '').trim(), text: String(a.text || '') })); } catch (e) { return null; }
+    try { return ((await AI.read(await aiImages(cls, x), nos, signal)).answers || []).map(a => ({ no: String(a.no || '').replace(/번/g, '').trim(), text: String(a.text || '') })); } catch (e) { return null; }
   }))).filter(Boolean);
-  if (samples.length < 2) return;
-  const r = await AI.classify(task, key, samples);
+  if (samples.length < 2 || (signal && signal.aborted)) throw new Error(signal && signal.aborted ? '시간 초과' : '학생 답을 충분히 읽지 못했어요');
+  const r = await AI.classify(task, key, samples, signal);
   (r.questions || []).forEach(q => {
     const a = (key.answers || []).find(x => x.no === String(q.no || '').replace(/번/g, '').trim()); if (!a) return;
     a.type = ['student', 'open'].includes(q.type) ? q.type : 'fixed'; a.rule = a.type === 'fixed' ? '' : (q.rule || ''); a.why = q.why || '';
