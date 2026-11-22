@@ -618,6 +618,17 @@ function classCounts(cls) {
   for (let i = 1; i <= cls.size; i++) n[statusOf(cls, i)]++;
   return n;
 }
+function classBadge(task, cls) {
+  const n = classCounts(cls);
+  let needSet = 0;
+  for (let i = 1; i <= cls.size; i++) {
+    const st = statusOf(cls, i), s = cls.students[i];
+    if ((st === 'AI 채점' || st === '채점 완료') && !(s && s.seteuk) && !(s && s.ai && noSeteukBasis(task, s))) needSet++;
+  }
+  if (n['채점 전'] || needSet) return `<b>${doneCount(cls)}/${cls.size}</b>`;
+  if (n['AI 채점']) return `<b class="kbadge ai" title="채점·세특은 다 됐어요. 선생님 확인이 ${n['AI 채점']}명 남았어요">확인 ${n['AI 채점']}</b>`;
+  return `<b class="kbadge ok" title="모든 학생 채점·세특·확인이 끝났어요">✓ 모두 확인</b>`;
+}
 function doneCount(cls) { const n = classCounts(cls); return n['채점 완료'] + n['미제출'] + n['미응시']; }
 function courseMeta(c) {
   const y = String(c.year || '').replace(/학년도/g, '').trim(), g = String(c.grade || '').replace(/학년/g, '').trim(), m = String(c.semester || '').replace(/학기/g, '').trim();
@@ -659,7 +670,7 @@ function renderSide() {
     const tasks = cOpen ? c.tasks.map(t => {
       const tCur = ctx.task === t;
       const tOpen = isOpen(t.id, tCur);
-      const cls = tOpen ? t.classes.map(k => `<a class="subj l2 ${ctx.cls === k ? 'on' : ''}" href="#/k/${k.id}"><span class="nm">${esc(k.name)}</span><b>${doneCount(k)}/${k.size}</b></a>`).join('') : '';
+      const cls = tOpen ? t.classes.map(k => `<a class="subj l2 ${ctx.cls === k ? 'on' : ''}" href="#/k/${k.id}"><span class="nm">${esc(k.name)}</span>${classBadge(t, k)}</a>`).join('') : '';
       const tOn = tCur && !ctx.cls;
       return `<div class="trow l1">${chev(t.id, tOpen, t.classes.length > 0)}<a class="subj ${tOn ? 'on' : ''}" href="#/t/${t.id}" data-tree="${t.id}" title="채점 기준 · 지금 보는 곳을 한 번 더 누르면 접기/펴기"><span class="nm">${esc(t.name)}</span><b>${t.classes.length ? t.classes.length + '반' : ''}</b></a></div>${cls}`;
     }).join('') : '';
@@ -1422,7 +1433,7 @@ function vClass(kid) {
     const on = G.sel && G.sel.kid === cls.id && G.sel.set.has(no);
     return `<a class="item stu ${on ? 'sel' : ''}" href="#/g/${cls.id}/${no}" data-no="${no}">
       <span class="no" data-act="stusel" data-kid="${cls.id}" data-no="${no}" title="고르기 (Shift: 사이 모두 · Ctrl+A: 모두 · Esc: 풀기)"><i class="ck"></i>${no}</span><span>${pillOf(st)}${sf != null ? ` <span class="pill ai" title="반과 다른 시험지 형">${esc(sf || '형 없음')}${sf ? '형' : ''}</span>` : ''}${s && s.formWarn ? ` <span class="pill bad" title="${esc(s.formWarn)}">시험지?</span>` : ''}${s && s.seteuk && s.seteukStale ? ' <span class="pill ai" title="채점 판단을 바꾼 뒤라 세특을 다시 써야 해요">세특 다시</span>' : ''}</span>
-      <span class="sc">${sc == null ? '<span class="faint">-</span>' : sc}${aisc != null && aisc !== sc ? `<small class="faint"> AI ${aisc}</small>` : ''}</span>
+      <span class="sc">${sc == null ? (aisc != null ? `<span class="aisc" title="AI 가 매긴 점수예요. 아직 선생님이 확인하지 않았어요(학생을 열어 보면 확정돼요)">AI ${aisc}</span>` : '<span class="faint">-</span>') : sc}${sc != null && aisc != null && aisc !== sc ? `<small class="faint" title="AI 가 매긴 점수"> AI ${aisc}</small>` : ''}</span>
       <span class="pv">${s && s.seteuk ? esc(s.seteuk) : `<span class="faint">${sub ? '' : '답안 없음'}</span>`}</span>
       <span class="r">${b ? `<span class="bt ${b > max ? 'bad' : ''}">${b}B</span><button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="세특 복사">${ic('copy')}</button>` : ''}</span></a>`;
   }).join('');

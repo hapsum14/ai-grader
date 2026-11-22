@@ -909,3 +909,13 @@ h1.cname .ibtn{opacity:.45} h1.cname:hover .ibtn{opacity:1}
 
 /* 고르기 막대: 위쪽 띠(56px) 바로 아래에 붙어 따라옴 */
 .selbar{top:62px;z-index:15;box-shadow:0 6px 18px rgba(20,10,50,.12);border:1px solid var(--line)}
+
+/* 왼쪽 반 이름 옆: 확인 N(노랑) · 모두 확인(초록) */
+.kbadge{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap}
+.kbadge.ai{background:#fdf0d5;color:#9a5b00}
+.kbadge.ok{background:#dcf3e4;color:#1f7a45}
+body.dark .kbadge.ai,[data-theme=dark] .kbadge.ai{background:rgba(240,170,40,.18);color:#f3c26b}
+body.dark .kbadge.ok,[data-theme=dark] .kbadge.ok{background:rgba(60,190,110,.18);color:#7fdca3}
+/* 확인 전 AI 점수 */
+.item.stu .sc .aisc{font-size:12.5px;font-weight:600;color:var(--muted);background:var(--bg2,rgba(0,0,0,.04));padding:1px 7px;border-radius:6px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .kbadge.ai{background:rgba(240,170,40,.18);color:#f3c26b}:root:not([data-theme="light"]) .kbadge.ok{background:rgba(60,190,110,.18);color:#7fdca3}}
