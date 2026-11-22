@@ -2575,8 +2575,10 @@ function quotaTick() {
       try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification('AI 서논술형 채점', { body: `${freed.join('·')} 한도가 풀렸어요.` }); } catch (e) {}
     }
   }
-  QLIVE = now;
-  if (now.size || QLIVE.size) { renderQuota(); const el = $('#susage'); if (el) el.innerHTML = usageHTML(); }
+  const was = QLIVE; QLIVE = now;
+  // 막힌 동안 + 풀린 그 순간에 한 번 더 그린다(안 그러면 '0:01'에서 멈춰 보임)
+  if (now.size || (was && was.size)) { renderQuota(); const el = $('#susage'); if (el) el.innerHTML = usageHTML(); }
+  else if (!(quotaTick.n = ((quotaTick.n || 0) + 1) % 15)) renderQuota(); // 그 밖에도 15초마다
 }
 // 다음 초기화 시각: '오늘 오후 5:00 (3시간 20분 뒤)'
 function resetText() {
