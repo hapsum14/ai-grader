@@ -872,3 +872,9 @@ body.grading #tcredit{display:none}
 .maskwrap .mk{display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px;overflow:hidden;white-space:nowrap}
 .maskwrap .mk.drawing{color:transparent}
 .mkview{display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px;overflow:hidden;white-space:nowrap}
+
+/* 반 제목: 이름 바꾸기 */
+h1.cname{display:flex;align-items:center;gap:6px}
+h1.cname [data-cren]{cursor:text}
+h1.cname .ibtn{opacity:.45} h1.cname:hover .ibtn{opacity:1}
+.cname-in{font-size:22px;font-weight:800;padding:4px 10px;width:min(320px,100%)}

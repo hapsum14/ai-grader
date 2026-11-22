@@ -1385,7 +1385,7 @@ function vClass(kid) {
   const TABL = { '': '전체', 'AI 채점': '확인 필요' };
   return `<div class="kcols"><div class="kleft">
   <div class="phead">
-    <div class="pt"><h1>${esc(cls.name)}</h1><div class="sub">${esc(task.name)} · ${task.maxScore}점${avg ? ` · 평균 ${avg}점` : ''}
+    <div class="pt"><h1 class="cname"><span data-cren="${cls.id}" title="두 번 누르면 반 이름 바꾸기">${esc(cls.name)}</span><button class="ibtn" data-act="renameclass" data-id="${cls.id}" data-inline="1" title="반 이름 바꾸기">${ic('pen')}</button></h1><div class="sub">${esc(task.name)} · ${task.maxScore}점${avg ? ` · 평균 ${avg}점` : ''}
       · <a class="lnk" href="#/t/${task.id}" title="채점 기준 보기·고치기">채점 기준</a>
       · <button class="lnk" data-act="keyview" data-id="${cls.id}" title="문항별 정답과 채점 기준 ↔ 문항">${keyOf(task, cls) ? `${formOf(cls) ? esc(formOf(cls)) + '형 ' : ''}정답표${keyOf(task, cls).checked ? '' : ' <span class="pill ai">확인 필요</span>'}` : '정답표 만들기'}</button>${Object.entries(task.keys || {}).filter(([f, k]) => k.sample && k.sample.k === cls.id && f !== formOf(cls)).map(([f, k]) => ` · <button class="lnk" data-act="keyview" data-id="${cls.id}" data-f="${esc(f)}">${f ? esc(f) + '형' : '다른 시험지'} 정답표${k.checked ? '' : ' <span class="pill ai">확인 필요</span>'}</button>`).join('')}</div></div>
     ${nextTodo ? `<a class="btn primary lg" href="#/g/${cls.id}/${nextTodo}">${ic('play')}${statusOf(cls, nextTodo) === 'AI 채점' ? '확인' : '채점'} 이어 하기 · ${nextTodo}번</a>`
@@ -2685,7 +2685,7 @@ const ACT = {
   masks(el) { maskModal(el.dataset.id); },
   morefiles(el) { filePick(true, el.dataset.id); },
   relink(el) { filePick(false, el.dataset.id); },
-  renameclass(el) { const { cls } = findClass(el.dataset.id); const n = prompt('반 이름', cls.name); if (n && n.trim()) { snap(`'${cls.name}' 반 이름 바꾸기`); cls.name = n.trim(); save(); rerender(); } },
+  renameclass(el) { if (document.querySelector(`[data-cren="${el.dataset.id}"]`)) { startClassRename(el.dataset.id); return; } const { cls } = findClass(el.dataset.id); const n = prompt('반 이름', cls.name); if (n && n.trim()) { snap(`'${cls.name}' 반 이름 바꾸기`); cls.name = n.trim(); save(); rerender(); } },
   async delclass(el) {
     const { task, cls } = findClass(el.dataset.id);
     if (!confirm(`'${cls.name}' 반의 답안 그림과 채점 기록을 모두 지울까요? (바로 되돌릴 수 있어요)`)) return;
@@ -2963,6 +2963,17 @@ document.addEventListener('click', e => {
   }
   if (go && !e.target.closest('a,button,input,select,textarea')) location.hash = go.dataset.go;
 });
+// 반 이름을 제목에서 바로 바꾸기
+function startClassRename(kid) {
+  const { cls } = findClass(kid); const el = document.querySelector(`[data-cren="${kid}"]`); if (!cls || !el) return;
+  const inp = document.createElement('input'); inp.className = 'in cname-in'; inp.value = cls.name; inp.placeholder = '예: 1학년 5반';
+  el.replaceWith(inp); inp.focus(); inp.select();
+  let done = false;
+  const end = ok => { if (done) return; done = true; const v = inp.value.trim(); if (ok && v && v !== cls.name) { snap(`'${cls.name}' 반 이름 바꾸기`); cls.name = v; save(); toast(`'${v}'(으)로 바꿨어요.`); } rerender(); };
+  inp.onkeydown = e => { if (e.key === 'Enter') end(true); else if (e.key === 'Escape') end(false); };
+  inp.onblur = () => end(true);
+}
+document.addEventListener('dblclick', e => { const t = e.target.closest && e.target.closest('[data-cren]'); if (t) startClassRename(t.dataset.cren); });
 function startRename(tid) {
   const { task } = findTask(tid); if (!task) return;
   const el = document.querySelector(`[data-ren="${tid}"]`);
