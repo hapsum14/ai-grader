@@ -140,6 +140,11 @@ const AI = (() => {
         return call(Object.assign({}, opts, { _noThink: true }), retried);
       }
       if (r.status === 429) {
+        // 결제 프로젝트의 '월 지출 한도'에 닿으면 모든 모델이 막힌다 → 기다리지 말고 바로 알린다
+        if (/spending cap|spend cap|spend limit/i.test(msg)) {
+          useLimit(model, 'day');
+          throw new Error('이 API 키 프로젝트의 이번 달 지출 한도(결제 한도)에 닿아 Google 이 사용을 막았어요. AI Studio → 지출에서 한도를 올리거나, 결제가 없는 무료 키로 바꿔 주세요. (매월 1일에 다시 풀려요)');
+        }
         // 무료 한도: 분당 한도면 알려 준 시간만큼 기다렸다 같은 모델로(최대 2번), 하루 한도면 다른 모델로
         const det = JSON.stringify((errj && errj.details) || []) + ' ' + msg;
         const perDay = /PerDay|per day|daily/i.test(det);
