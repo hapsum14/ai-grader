@@ -1420,18 +1420,15 @@ function vClass(kid) {
   <div class="prog3"><div class="bar3"><i class="ok" style="width:${pct(done)}"></i><i class="ai" style="width:${pct(n['AI 채점'])}"></i></div>
     <span><b>${done}</b>/${cls.size}명 처리${n['AI 채점'] ? ` · 확인 필요 <b>${n['AI 채점']}</b>` : ''} · 세특 <b>${nSet}</b></span></div>
   <div class="tools">
-    ${n['채점 전'] ? `<button class="btn" data-act="batchgrade" data-id="${cls.id}" title="채점 전 학생을 AI 가 먼저 채점">${ic('bot')}AI 채점<b class="cnt">${n['채점 전']}</b></button>`
-      : `<button class="btn" data-act="regrade" data-id="${cls.id}" title="이미 채점한 학생을 AI 로 다시 채점">${ic('bot')}AI 채점 다시</button>`}
+    ${n['채점 전'] ? `<button class="btn" data-act="batchgrade" data-id="${cls.id}" title="채점 전 학생을 AI 가 먼저 채점">${ic('bot')}AI 채점<b class="cnt">${n['채점 전']}</b></button>` : ''}
     ${strictSeg(task)}
-    ${canSet ? `<button class="btn" data-act="batchseteuk" data-id="${cls.id}" title="채점된 학생의 세특 초안 만들기">${ICON.wand}세특 만들기<b class="cnt">${canSet}</b></button>`
-      : `<button class="btn" data-act="reseteuk" data-id="${cls.id}" title="이미 쓴 세특을 다시 쓰기">${ICON.wand}세특 다시 쓰기</button>`}
+    ${canSet ? `<button class="btn" data-act="batchseteuk" data-id="${cls.id}" title="채점된 학생의 세특 초안 만들기">${ICON.wand}세특 만들기<b class="cnt">${canSet}</b></button>` : ''}
+    <span class="small faint selhint">☑ 목록에서 학생을 고르면 다시 채점·세특</span>
     <span class="sp"></span>
     ${!cls.masks.length ? `<a class="warnchip" href="#/k/${cls.id}/pages" title="AI 로 보내기 전에 학번·이름 칸을 가리세요">${ic('eye')}이름 가리기 필요</a>` : ''}
     <details class="menu"><summary class="btn" title="더 보기">${ic('more')}</summary><div class="mlist">
       <div class="mcap">답안</div>
       <a href="#/k/${cls.id}/pages">${ICON.img}답안 나누기 · 이름 가리기</a>
-      ${n['채점 전'] ? `<button data-act="regrade" data-id="${cls.id}">${ic('bot')}이미 채점한 학생 다시 채점…</button>` : ''}
-      ${canSet ? `<button data-act="reseteuk" data-id="${cls.id}">${ICON.wand}이미 쓴 세특 다시 쓰기…</button>` : ''}
       <div class="mcap">내보내기</div>
       <button data-act="copyall" data-id="${cls.id}">${ic('copy')}세특 모두 복사</button>
       <button data-act="xlsx" data-id="${cls.id}">${ic('down')}엑셀로 내보내기</button>

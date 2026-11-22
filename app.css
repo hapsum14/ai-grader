@@ -890,3 +890,6 @@ h1.cname .ibtn{opacity:.45} h1.cname:hover .ibtn{opacity:1}
 .item.stu{grid-template-columns:58px 84px 78px minmax(0,1fr) 110px}
 @media (max-width:820px){.item.stu{grid-template-columns:50px 76px 54px minmax(0,1fr) 40px}}
 .usage .pill .cd{font-variant-numeric:tabular-nums}
+
+.tools .selhint{white-space:nowrap}
+@media (max-width:1100px){.tools .selhint{display:none}}
