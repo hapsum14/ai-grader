@@ -407,9 +407,9 @@ const AI = (() => {
       judge: { model: MODELS.flash, think: null }, judge2: { model: MODELS.lite, think: 'low' }, seteuk: { model: MODELS.flash, think: 'low' },
     };
     if (mode === 'fast') { const m = s.model; return { key: { model: m, think: 'low' }, read: { model: m, think: 'low' }, judge: { model: m, think: 'low' }, judge2: null, seteuk: { model: m, think: 'low' } }; }
-    // 자동(무료 버전 기본): 정답표는 형마다 한 번 Flash 로 꼼꼼히, 답 읽기·세특은 빠른 Flash-Lite, 기준 판단만 Flash(글만 보내 빠름)
-    // 자동: 정답표·판단·세특(정확도) = Flash 와 Gemini 4 Hydrogen 을 번갈아, 답 읽기 = Flash-Lite
-    return { key: { model: flashPick(), think: 'medium' }, read: { model: MODELS.lite, think: 'low' }, judge: { model: flashPick(), think: 'low' }, judge2: null, seteuk: { model: flashPick(), think: 'low' } };
+    // 자동(아껴 쓰기): 학생마다 되풀이하는 일(답 읽기·판단·세특)은 값싸고 한도가 큰 Flash-Lite,
+    // 형마다 한 번뿐인 정답표·문항 유형만 Flash·Hydrogen(오늘 덜 쓴 쪽). Flash-Lite 가 막히면 Flash·Hydrogen 으로 넘어감
+    return { key: { model: flashPick(), think: 'medium' }, read: { model: MODELS.lite, think: 'min' }, judge: { model: MODELS.lite, think: 'low' }, judge2: null, seteuk: { model: MODELS.lite, think: 'low' } };
   }
 
   // 1) 정답표: 시험지(첫 답안지)를 읽고 형, 문항별 정답, 기준↔문항 대응, 판단 지침

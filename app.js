@@ -2419,7 +2419,7 @@ function settingsModal() {
       <label class="f">Gemini API 키 <a href="${KEY_URL}" target="_blank" rel="noopener">무료 발급 ↗</a></label>
       <div class="row" style="flex-wrap:nowrap"><input class="in" id="skey" type="password" value="${esc(s.apiKey)}" placeholder="AIza…" autocomplete="off"><button class="btn sm" id="sshow">보기</button></div>
       <label class="f">채점 방식</label>
-      <div class="row"><span class="seg" id="smode">${[['auto', '자동(무료 추천)'], ['accurate', '정확하게'], ['fast', '빠르게']].map(([m, l]) => `<button data-m="${m}" class="${(s.mode || 'auto') === m ? 'on' : ''}">${l}</button>`).join('')}</span></div>
+      <div class="row"><span class="seg" id="smode">${[['auto', '자동(아껴 쓰기)'], ['accurate', '정확하게'], ['fast', '빠르게']].map(([m, l]) => `<button data-m="${m}" class="${(s.mode || 'auto') === m ? 'on' : ''}">${l}</button>`).join('')}</span></div>
       <p class="small muted" id="smodenote" style="margin:6px 0 0"></p>
       <label class="f">오늘 사용량 <button class="lnk" data-act="quotahelp">무료 한도 안내</button></label>
       <div id="susage">${usageHTML()}</div>
@@ -2444,7 +2444,7 @@ function settingsModal() {
       <p class="small faint" style="margin:10px 0 0">무료 키로 보낸 답안은 Google 이 서비스 개선에 쓸 수 있어요. 이름 칸 가리기를 꼭 하세요.</p>
     </div>
     <div class="foot"><button class="btn" data-act="close">닫기</button><button class="btn primary" id="ssave">저장</button></div>`);
-  const MN = { auto: '정확도가 필요한 판단·정답표·세특은 Flash 와 Gemini 4 Hydrogen 을 번갈아(하루 한도를 두 배로), 답 읽기는 Flash-Lite · 한쪽이 한도에 닿으면 다른 쪽으로, 둘 다 막히면 Flash-Lite', accurate: '모두 Flash, 판단은 깊게 생각하고 한 번 더 확인 · 1명 약 20~40초 · 무료 한도를 빨리 씀', fast: '아래에서 고른 모델 하나로 빠르게 · 1명 약 5초 · 애매한 판단이 늘 수 있어요' };
+  const MN = { auto: '가장 적게·빠르게: 학생마다 하는 답 읽기·판단·세특은 Flash-Lite(값이 가장 싸고 하루 한도가 가장 큼), 형마다 한 번인 정답표만 Flash·Gemini 4 Hydrogen · Flash-Lite 가 막히면 Flash·Hydrogen 으로', accurate: '모두 Flash, 판단은 깊게 생각하고 한 번 더 확인 · 1명 약 20~40초 · 무료 한도를 빨리 씀', fast: '아래에서 고른 모델 하나로 빠르게 · 1명 약 5초 · 애매한 판단이 늘 수 있어요' };
   const modeNote = () => { $('#smodenote').textContent = MN[$('#smode button.on').dataset.m]; };
   $$('#smode button').forEach(b => b.onclick = () => { $$('#smode button').forEach(x => x.classList.toggle('on', x === b)); modeNote(); });
   modeNote();
@@ -2505,6 +2505,8 @@ function usageRows() {
     y.n += x.n; y.tin += x.tin; y.tout += x.tout; if (x.limit && (!y.limitAt || x.limitAt > y.limitAt)) Object.assign(y, { limit: x.limit, limitAt: x.limitAt, until: x.until });
   });
   FREE_ROWS.forEach(k => { m[k] = m[k] || { n: 0, tin: 0, tout: 0 }; });
+  const sp = Object.values(m).find(x => x.limit === 'spend');
+  if (sp) Object.values(m).forEach(x => { x.limit = 'spend'; x.limitAt = sp.limitAt; });
   const order = k => { const i = FREE_ROWS.indexOf(k); return i < 0 ? 9 : i; };
   return Object.entries(m).filter(([k, x]) => FREE_ROWS.includes(k) || x.n).sort((a, b) => order(a[0]) - order(b[0]));
 }
@@ -2518,13 +2520,14 @@ function limitLeft(x) {
 const hms = ms => { const t = Math.ceil(ms / 1000), h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), sc = t % 60; return h ? `${h}:${String(m).padStart(2, '0')}:${String(sc).padStart(2, '0')}` : `${m}:${String(sc).padStart(2, '0')}`; };
 function limitPill(x) {
   const left = limitLeft(x);
-  if (x.limit === 'spend') return '<span class="pill bad">월 지출 한도 — 매월 1일 풀림</span>';
+  if (x.limit === 'spend') return '<span class="pill bad">지출 한도로 막힘</span>';
   if (!x.limit || !left) return '<span class="pill ok">쓸 수 있음</span>';
-  return x.limit === 'day' ? `<span class="pill bad">하루 한도 · <b class="cd">${hms(left)}</b> 뒤 채워짐</span>` : `<span class="pill ai">분당 한도 · <b class="cd">${hms(left)}</b> 뒤 풀림</span>`;
+  return x.limit === 'day' ? `<span class="pill bad">하루 한도&nbsp;·&nbsp;<b class="cd">${hms(left)}</b> 뒤 채워짐</span>` : `<span class="pill ai">분당 한도&nbsp;·&nbsp;<b class="cd">${hms(left)}</b> 뒤 풀림</span>`;
 }
 function usageHTML() {
   const rows = usageRows();
-  return `<div class="usage">${rows.map(([k, x]) => `<div class="ur"><b>${esc(k)}</b><span>${x.n}회</span><span class="faint">${Math.round((x.tin + x.tout) / 1000)}천 토큰</span>${limitPill(x)}</div>`).join('')}</div>
+  const spend = rows.some(([, x]) => x.limit === 'spend');
+  return `${spend ? `<div class="qh-now bad" style="margin-bottom:8px">이 API 키는 <b>이번 달 지출 한도</b>에 닿아 <b>모든 모델</b>이 막혔어요(한도는 모델별이 아니라 키 전체에 걸려요). ${spendRetry()} 이후 다시 쓰거나, AI Studio 에서 지출 한도를 올리거나 무료 키로 바꿔 주세요.</div>` : ''}<div class="usage">${rows.map(([k, x]) => `<div class="ur"><b>${esc(k)}</b><span>${x.n}회</span><span class="faint">${Math.round((x.tin + x.tout) / 1000)}천 토큰</span>${limitPill(x)}</div>`).join('')}</div>
     <p class="small faint" style="margin:6px 0 0">하루 한도는 <b>${resetText()}</b>에 다시 채워져요. 넘으면 다른 모델로 저절로 바꿔 이어 가고, 풀리면 알려 드려요.</p>`;
 }
 // 1초마다: 남은 시간 고치기 + 한도가 풀린 모델을 알림
@@ -2559,7 +2562,7 @@ function quotaHelp(back) {
     <div class="qh">
       <div class="qhr"><b>한도는 두 가지</b><span><b>분당</b>: 1분에 보낼 수 있는 요청 수 — 넘으면 1분 안에 저절로 풀려요(앱이 기다렸다 이어 감).<br><b>하루</b>: 하루에 보낼 수 있는 요청 수 — 넘으면 다음 초기화 때까지 그 모델은 쉬어요.</span></div>
       <div class="qhr"><b>언제 다시 채워지나</b><span>하루 한도는 미국 태평양 시각 자정에 초기화돼요. 한국 시각으로 <b>오후 5시</b>(3~11월 초 서머타임 때는 <b>오후 4시</b>)예요.</span></div>
-      <div class="qhr"><b>얼마나 쓰나</b><span>학생 1명 채점 = 요청 약 2번(답 읽기 1 + 판단 1), 세특 1명 = 1번. 계획서 읽기 = 1~2번.<br>무료 한도는 모델마다 하루 수백~천 번 안팎이라 보통 한 반(30명 안팎)은 넉넉해요.</span></div>
+      <div class="qhr"><b>얼마나 쓰나</b><span>학생 1명 채점 = 요청 약 2번(답 읽기 1 + 판단 1, 세특은 판단과 함께), 모두 Flash-Lite 로 해서 가장 적게 써요. 정답표만 형마다 한 번 Flash. 계획서 읽기 = 1~2번.<br>무료 한도는 모델마다 하루 수백~천 번 안팎이라 보통 한 반(30명 안팎)은 넉넉해요.</span></div>
       <div class="qhr"><b>넘으면 어떻게</b><span>앱이 Flash ↔ Gemini 4 Hydrogen ↔ Flash-Lite 로 저절로 바꿔 이어 가요. 일괄 채점은 한도가 풀릴 때까지 기다렸다 그 학생부터 이어 가고, 풀리면 알려 드려요(위쪽 단추에 남은 시간). 둘 다 다 쓰면 초기화 뒤 남은 학생만 이어서 하면 돼요(한 결과는 저장돼 있어요).</span></div>
       <div class="qhr"><b>한도를 늘리려면</b><span>Google AI Studio 에서 결제(유료)를 등록하면 크게 늘어나요. 무료로 쓸 때는 필요 없어요.</span></div>
     </div>
