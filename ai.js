@@ -241,7 +241,7 @@ const AI = (() => {
     // fast: 답이 늦을 때 — 생각하기가 짧은 Flash-Lite 를 먼저
     const rank = fast ? (d => (d.tier === 'flash-lite' ? 0 : d.tier === 'flash' ? 1 : 2))
       : (d => (d.tier === cur.tier ? 0 : d.tier === 'flash' ? 1 : 2));
-    list.sort((a, b) => rank(a) - rank(b));
+    list.sort((a, b) => (rank(a) + (a.id === HYD ? 0.5 : 0)) - (rank(b) + (b.id === HYD ? 0.5 : 0))); // 같은 급이면 Flash 가 Hydrogen 보다 먼저
     return tried.length > 3 ? null : (list[0] || {}).id || null;
   }
   function sleep(ms, signal) {
@@ -412,10 +412,9 @@ const AI = (() => {
   // Flash 급 두 모델 가운데 오늘 한도가 남았고 덜 쓴 쪽. 둘 다 막혔으면 Flash-Lite
   function flashPick() {
     const u = usageToday();
+    // Flash 먼저, Flash 가 막혔을 때만 Hydrogen, 둘 다 막히면 Flash-Lite
     const c = [MODELS.flash, MODELS.hyd].filter(m => !dayLimited(m) && !busyNow(m));
-    if (!c.length) return MODELS.lite;
-    c.sort((a, b) => ((u.m[tierName(a)] || {}).n || 0) - ((u.m[tierName(b)] || {}).n || 0));
-    return c[0];
+    return c[0] || MODELS.lite;
   }
   function plan() {
     const s = cfg(), mode = s.mode || 'auto';
@@ -721,5 +720,5 @@ ${SETEUK_SYS}` });
     return { text: t, level: '분석', quotes: ['(모의) 1번 학생 답'] };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, detectForm, classify, sameQ, onUsage: f => useL.push(f), clearLimits, probe };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, detectForm, classify, sameQ, onUsage: f => useL.push(f), clearLimits, probe, anyLeft: () => [MODELS.flash, MODELS.hyd, MODELS.lite].some(m => !dayLimited(m)) };
 })();

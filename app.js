@@ -2135,7 +2135,8 @@ async function judgeInto(task, cls, no, answers, signal, extra = {}) {
   const before = task.criteria.map((c, i) => finalMet(task, s, i)).join(); // 이전 최종 판단(손대지 않았으면 이전 AI 판단)
   s.ai = { transcript: answers.map(a => `${a.no}. ${a.text}`).join('\n'), answers, criteria: crit, feedback: j1.feedback || '', observation: j1.observation || '', obsQuotes: j1.obsQuotes || [], strengths: j1.strengths || '',
     blank: !!extra.blank, unreadable: !!extra.unreadable, at: Date.now(), model: AI.isMock() ? '모의' : P.judge.model, strict: task.strict || '보통', form: stuForm(cls, no) };
-  if (!s.touched && s.special == null && s.override == null) applyAI(task, s);
+  if (s.regrade || (!s.touched && s.special == null && s.override == null)) { applyAI(task, s); s.creason = null; }
+  delete s.regrade;
   if (s.seteuk && before !== task.criteria.map((c, i) => finalMet(task, s, i)).join()) s.seteukStale = true;
   if ((!s.seteuk || (s.seteuk === s.seteukAI && s.seteukFrom === 'draft')) && !noSeteukBasis(task, s)) {
     let rng = rangeFor(task); if (levelOf(task, s) === '하') rng = [Math.min(Math.round(rng[1] * 0.4), rng[0]), rng[1]];
@@ -2351,6 +2352,7 @@ function quotaKind(msg) {
 }
 // 한도가 풀릴 때까지 기다린다(분당 1분, 하루·월 한도는 5분마다 다시 시도). 멈추기를 누르면 그만
 async function waitQuota(j, kind) {
+  if (kind === 'day' && AI.anyLeft()) kind = 'minute'; // 한 모델만 하루 한도 → 다른 모델로 곧 다시
   const until = kind === 'minute' ? Date.now() + 65000 : kind === 'day' ? AI.resetAt().getTime() + 30000 : Date.now() + 5 * 60000;
   const what = kind === 'minute' ? '분당 한도' : kind === 'day' ? `하루 한도(${AI.resetAt().toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}에 다시 채워짐)` : '이번 달 지출 한도';
   j.waitKind = kind;
@@ -2482,7 +2484,7 @@ function settingsModal() {
       <p class="small faint" style="margin:10px 0 0">무료 키로 보낸 답안은 Google 이 서비스 개선에 쓸 수 있어요. 이름 칸 가리기를 꼭 하세요.</p>
     </div>
     <div class="foot"><button class="btn" data-act="close">닫기</button><button class="btn primary" id="ssave">저장</button></div>`);
-  const MN = { auto: '가장 적게·빠르게: 학생마다 하는 답 읽기·판단·세특은 Flash-Lite(값이 가장 싸고 하루 한도가 가장 큼), 형마다 한 번인 정답표만 Flash·Gemini 4 Hydrogen · Flash-Lite 가 막히면 Flash·Hydrogen 으로', accurate: '모두 Flash, 판단은 깊게 생각하고 한 번 더 확인 · 1명 약 20~40초 · 무료 한도를 빨리 씀', fast: '아래에서 고른 모델 하나로 빠르게 · 1명 약 5초 · 애매한 판단이 늘 수 있어요' };
+  const MN = { auto: '가장 적게·빠르게: 답 읽기·판단·세특은 모두 Flash-Lite(값이 가장 싸고 하루 한도가 가장 큼), 형마다 한 번인 정답표만 Flash(막히면 Gemini 4 Hydrogen) · 다른 모델이 막히면 Flash-Lite 로', accurate: '모두 Flash, 판단은 깊게 생각하고 한 번 더 확인 · 1명 약 20~40초 · 무료 한도를 빨리 씀', fast: '아래에서 고른 모델 하나로 빠르게 · 1명 약 5초 · 애매한 판단이 늘 수 있어요' };
   const modeNote = () => { $('#smodenote').textContent = MN[$('#smode button.on').dataset.m]; };
   $$('#smode button').forEach(b => b.onclick = () => { $$('#smode button').forEach(x => x.classList.toggle('on', x === b)); modeNote(); });
   modeNote();
@@ -2973,7 +2975,7 @@ const ACT = {
       go: `${ic('bot')}다시 채점`,
       run: items => {
         cls._reuse = reread ? null : new Set(items);
-        items.forEach(no => { const s = stu(cls, no); if (!s.done) Object.assign(s, { touched: false, override: null, special: null, checks: [], pts: [], creason: null }); });
+        items.forEach(no => { const s = stu(cls, no); if (!s.done) s.regrade = true; });
         save(); G.sel = null; ACT.batchgrade({ dataset: { id: cls.id } }, null, items);
       },
     });
@@ -3026,7 +3028,7 @@ const ACT = {
     const items = Object.keys(cls.students).map(Number).filter(no => { const s = cls.students[no]; return s.ai && s.ai.answers && !s.done && i >= 0 && !finalMet(task, s, i); });
     if (!items.length) { rerender(); toast('다시 판단할 학생이 없어요.'); return; }
     cls._reuse = new Set(items);
-    items.forEach(no => Object.assign(stu(cls, no), { touched: false, override: null, special: null, checks: [], pts: [], creason: null }));
+    items.forEach(no => { const s = stu(cls, no); if (!s.done) s.regrade = true; });
     toast(`${q}번을 학생 조건에 따라 판단하도록 바꿨어요. 틀림이었던 ${items.length}명을 다시 판단해요(이미 읽은 답 사용).`, 4000);
     ACT.batchgrade({ dataset: { id: cls.id } }, 'again', items);
   },
@@ -3343,6 +3345,15 @@ function renderGsync() {
     let last = ''; try { last = localStorage.getItem('aigrader-route') || ''; } catch (e) {}
     if (last && last !== '#/' && routeAlive(last)) { history.replaceState(null, '', last); toast('지난번에 보던 화면에서 이어 갑니다.', 2500); }
   }
+  // 예전 '다시 채점'이 중간에 멈춰 점수가 비어 있던 학생: 이전 AI 판단을 넣어 두고, 아직 남은 작업이면 '다시 채점' 표시
+  try {
+    const left = new Map(); pendGet().forEach(p => (p.left || []).forEach(no => left.set(p.clsId + ':' + no, 1)));
+    let fixed = 0;
+    S.courses.forEach(c => c.tasks.forEach(t => t.classes.forEach(k => Object.entries(k.students || {}).forEach(([no, x]) => {
+      if (x.ai && x.ai.criteria && !x.touched && x.special == null && x.override == null && !x.done) { applyAI(t, x); if (left.has(k.id + ':' + no)) x.regrade = true; fixed++; }
+    }))));
+    if (fixed) save();
+  } catch (e) {}
   route();
   resumeJobs();
   setTimeout(gcImgs, 8000);

@@ -108,7 +108,69 @@ const Sync = (() => {
     return (await find(`'${root}' in parents and appProperties has { key='ag' and value='${kind}' }`))[0] || null;
   }
 
+  /* ---------- 자동 합치기: 두 기기의 기록이 다르면 묻지 않고 합친다 ----------
+     - 과목·수행평가·반은 id 로 합친다. 지난번 맞춘 뒤 한쪽에서 지운 것은 지운 대로(meta.ids 로 앎)
+     - 같은 학생이 양쪽에 있으면: 나중에 고친 쪽(mt) → 더 진행된 쪽(확인 > 손댐 > AI 채점 > 세특) → 최근 AI 채점 */
+  const own = (o, kids) => JSON.stringify(o, (k, v) => (k === 'mt' || (kids && k === kids) || k[0] === '_') ? undefined : v);
+  function walk(st, f) {
+    (st.courses || []).forEach(c => { f('c:' + c.id, c, 'tasks');
+      (c.tasks || []).forEach(t => { f('t:' + t.id, t, 'classes');
+        (t.classes || []).forEach(k => { f('k:' + k.id, k, 'students');
+          Object.entries(k.students || {}).forEach(([no, x]) => f('s:' + k.id + ':' + no, x, null)); }); }); });
+  }
+  let lastJ = null;
+  function stampInit(st) { lastJ = new Map(); walk(st, (key, o, kids) => lastJ.set(key, own(o, kids))); }
+  // 지난번 이후 바뀐 것에 고친 시각(mt)을 붙인다
+  function stamp(st) { if (!lastJ) { stampInit(st); return; } const now = Date.now(); walk(st, (key, o, kids) => { const j = own(o, kids); if (lastJ.get(key) !== j) { o.mt = now; lastJ.set(key, j); } }); }
+  const idsOf = st => { const a = []; walk(st, key => { if (key[0] !== 's') a.push(key); }); return a; };
+  const prog = x => (x.done ? 8 : 0) + (x.touched ? 4 : 0) + (x.ai ? 2 : 0) + (x.seteuk ? 1 : 0);
+  function pickStu(l, r) {
+    if ((l.mt || 0) !== (r.mt || 0)) return (r.mt || 0) > (l.mt || 0) ? r : l;
+    if (prog(l) !== prog(r)) return prog(r) > prog(l) ? r : l;
+    return ((r.ai || {}).at || 0) > ((l.ai || {}).at || 0) ? r : l;
+  }
+  function mergeStu(L, R) { const out = {}; new Set([...Object.keys(L || {}), ...Object.keys(R || {})]).forEach(no => { const l = (L || {})[no], r = (R || {})[no]; out[no] = !l ? r : !r ? l : pickStu(l, r); }); return out; }
+  function mergeList(L, R, kids, pre, known, sub) {
+    const out = [], rmap = new Map((R || []).map(x => [x.id, x]));
+    (L || []).forEach(l => {
+      const r = rmap.get(l.id); rmap.delete(l.id);
+      if (!r) { if (!known.has(pre + l.id)) out.push(l); return; } // 저쪽에서 지운 것은 뺀다
+      const base = Object.assign({}, (r.mt || 0) > (l.mt || 0) ? r : l);
+      base[kids] = sub(l, r); out.push(base);
+    });
+    rmap.forEach(r => { if (!known.has(pre + r.id)) out.push(r); }); // 이쪽에서 지운 것은 다시 넣지 않는다
+    return out;
+  }
+  function mergeState(L, R) {
+    const known = new Set(meta().ids || []);
+    const out = Object.assign({}, R, L);
+    out.courses = mergeList(L.courses, R.courses, 'tasks', 'c:', known, (l, r) =>
+      mergeList(l.tasks, r.tasks, 'classes', 't:', known, (l2, r2) =>
+        mergeList(l2.classes, r2.classes, 'students', 'k:', known, (l3, r3) => mergeStu(l3.students, r3.students))));
+    return out;
+  }
+  async function autoMerge(f) {
+    const r = await req(`${API}/files/${f.id}?alt=media`, {}, true);
+    const j = await r.json();
+    if (!j || !j.state || !j.state.courses) throw new Error('드라이브의 기록 파일을 읽지 못했습니다.');
+    try { await DB.put('kv', 'state-before-sync', strip(S)); } catch (e) {}
+    stamp(S);
+    const merged = mergeState(strip(S), j.state);
+    quiet = true; S = merged; await save(true); quiet = false;
+    stampInit(S);
+    setMeta({ dirty: true });
+    pushing = false; await push(true);
+    if (typeof route === 'function') route({ keepSide: true });
+    toast('드라이브와 이 컴퓨터의 기록을 합쳐 저장했어요.', 3000);
+  }
+
   /* ---------- 채점 기록(state.json) ---------- */
+  // 방금 올린 파일도 정확히 읽도록: 검색(늦게 반영될 수 있음) 대신 id 로 직접 읽는다
+  async function stateFile() {
+    const id = meta().stateId;
+    if (id) { try { const f = await req(`${API}/files/${id}?fields=id,appProperties,trashed`); if (f && !f.trashed) return f; } catch (e) { if (e.need) throw e; } }
+    const f = await fileOf('state'); if (f) setMeta({ stateId: f.id }); return f;
+  }
   const strip = s => JSON.parse(JSON.stringify(s, (k, v) => (k[0] === '_' ? undefined : v)));
   const count = s => { let k = 0, g = 0; (s.courses || []).forEach(c => c.tasks.forEach(t => t.classes.forEach(x => { k++; g += Object.values(x.students || {}).filter(st => st.ai || st.touched || st.status).length; }))); return { c: (s.courses || []).length, k, g }; };
   const when = t => t ? new Date(Number(t)).toLocaleString() : '-';
@@ -124,15 +186,16 @@ const Sync = (() => {
     pushing = true; setState('busy', '드라이브에 저장하는 중…');
     try {
       const m = meta();
-      const f = await fileOf('state');
+      const f = await stateFile();
       const rUpd = f && f.appProperties && f.appProperties.upd;
-      if (!force && f && rUpd && rUpd !== m.synced) { pushing = false; await conflict(f); return; }
+      if (!force && f && rUpd && rUpd !== m.synced) { pushing = false; await autoMerge(f); return; } // 다른 기기에서 바뀜 → 합쳐서 올림
+      stamp(S);
       const upd = String(Date.now());
       const blob = new Blob([JSON.stringify({ app: 'ai-grader', state: strip(S) })], { type: 'application/json' });
       const metaObj = { appProperties: { ag: 'state', upd } };
       if (!f) Object.assign(metaObj, { name: 'state.json', parents: [await rootId()] });
-      await upload(f && f.id, metaObj, blob);
-      setMeta({ synced: upd, dirty: false });
+      const res = await upload(f && f.id, metaObj, blob);
+      setMeta({ synced: upd, dirty: false, ids: idsOf(S), stateId: (res && res.id) || (f && f.id) || m.stateId });
       setState('ok', '드라이브에 저장됨 ' + new Date().toTimeString().slice(0, 5));
     } catch (e) { if (!e.need) setState('error', e.message); }
     pushing = false;
@@ -141,13 +204,13 @@ const Sync = (() => {
     if (!signedIn() || pulling || pushing || !haveToken()) return false;
     pulling = true;
     try {
-      const f = await fileOf('state');
+      const f = await stateFile();
       const m = meta();
       if (!f) { pulling = false; if (count(S).c) { setMeta({ dirty: true }); await push(true); } else setState('ok', '드라이브 연결됨'); return false; }
       const rUpd = f.appProperties && f.appProperties.upd;
       if (rUpd === m.synced) { setState('ok', '드라이브와 같음'); pulling = false; if (m.dirty) push(); return false; }
       // 처음 이 컴퓨터를 잇는데 이 컴퓨터에도 기록이 있거나, 양쪽이 다 바뀌었으면 묻는다
-      if (m.dirty || (!m.synced && count(S).c)) { pulling = false; await conflict(f); return true; }
+      if (m.dirty || (!m.synced && count(S).c)) { pulling = false; await autoMerge(f); return true; } // 묻지 않고 합침
       await takeRemote(f, opts.silent);
     } catch (e) { if (!e.need) setState('error', e.message); }
     pulling = false;
@@ -159,7 +222,8 @@ const Sync = (() => {
     if (!j || !j.state || !j.state.courses) throw new Error('드라이브의 기록 파일을 읽지 못했습니다.');
     try { await DB.put('kv', 'state-before-sync', strip(S)); } catch (e) {}
     quiet = true; S = j.state; await save(true); quiet = false;
-    setMeta({ synced: f.appProperties.upd, dirty: false });
+    setMeta({ synced: f.appProperties.upd, dirty: false, ids: idsOf(S), stateId: f.id });
+    stampInit(S);
     setState('ok', '드라이브에서 불러옴 ' + new Date().toTimeString().slice(0, 5));
     if (typeof route === 'function') route({ keepSide: true });
     if (!silent) toast('드라이브의 최신 기록을 불러왔습니다.', 3000);
@@ -349,6 +413,7 @@ const Sync = (() => {
     setState('off', '');
   }
   async function boot() {
+    try { if (typeof S !== 'undefined' && S) stampInit(S); } catch (e) {} // 지금 기록을 기준으로, 이후 바뀐 것에 고친 시각을 붙임
     if (!enabled()) { setState('off'); return; }
     if (returned && returned.error) {
       const r = returned; returned = null;
@@ -378,6 +443,7 @@ const Sync = (() => {
   });
 
   return {
+    _merge: mergeState, _stamp: stamp, _stampInit: stampInit,
     enabled, signedIn, login, logout, boot, push, pull, dirty, dirtySettings, queueImg, fetchImg, prefetch, delPrefix,
     status: () => ({ state, note, user: meta().user, name: meta().name, dirty: !!meta().dirty, queue: upq().length }),
     onChange: f => listeners.push(f),
