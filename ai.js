@@ -28,7 +28,7 @@ const AI = (() => {
   function useSave(u, ev) { try { localStorage.setItem(UK, JSON.stringify(u)); } catch (e) {} useL.forEach(f => { try { f(u, ev); } catch (e) {} }); }
   const tierName = m => { if (m === 'gemini-4-hydrogen') return 'Gemini 4 Hydrogen'; const d = describe(m); return d.tier === 'flash-lite' ? 'Flash-Lite' : d.tier === 'pro' ? 'Pro' : d.tier === 'flash' ? 'Flash' : m; };
   function useRow(u, model) { const k = tierName(model); return (u.m[k] = u.m[k] || { n: 0, tin: 0, tout: 0 }); }
-  function useAdd(model, um) { const u = usageToday(); const x = useRow(u, model); x.n++; if (um) { x.tin += Number(um.promptTokenCount) || 0; x.tout += (Number(um.candidatesTokenCount) || 0) + (Number(um.thoughtsTokenCount) || 0); } if (x.limit === 'minute') delete x.limit; useSave(u); }
+  function useAdd(model, um) { const u = usageToday(); const x = useRow(u, model); x.n++; if (um) { x.tin += Number(um.promptTokenCount) || 0; x.tout += (Number(um.candidatesTokenCount) || 0) + (Number(um.thoughtsTokenCount) || 0); } if (x.limit === 'minute') delete x.limit; Object.values(u.m).forEach(y => { if (y.limit === 'spend') { delete y.limit; delete y.until; } }); useSave(u); }
   function useLimit(model, kind, next, until) {
     const u = usageToday(); const x = useRow(u, model); x.limit = kind; x.limitAt = Date.now();
     x.until = until || (kind === 'minute' ? Date.now() + 65000 : kind === 'day' ? resetAt().getTime() : null);
@@ -36,6 +36,23 @@ const AI = (() => {
   }
   // 분당 한도로 잠깐 막힌 모델(풀릴 때까지)
   const busyNow = m => { const x = usageToday().m[tierName(m)]; return !!(x && x.limit === 'minute' && (x.until || (x.limitAt || 0) + 65000) > Date.now()); };
+  // 키를 바꾸면 이전 키의 한도 표시는 지운다(쓴 횟수는 그대로)
+  function clearLimits() { const u = usageToday(); Object.values(u.m).forEach(x => { delete x.limit; delete x.until; delete x.limitAt; }); useSave(u); }
+  // 새 키로 아주 짧은 요청 하나(답 1글자): 지출 한도·하루 한도에 막혔는지 바로 확인
+  async function probe() {
+    const key = (cfg().apiKey || '').trim(); if (!key || key === 'mock') return 'ok';
+    const m = MODELS.lite;
+    try {
+      const r = await fetch(`${BASE}/models/${encodeURIComponent(m)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'ok' }] }], generationConfig: { maxOutputTokens: 1, thinkingConfig: { thinkingLevel: 'minimal' } } }) });
+      if (r.ok) { const u = usageToday(); Object.values(u.m).forEach(y => { if (y.limit === 'spend') { delete y.limit; delete y.until; } }); useSave(u); return 'ok'; }
+      const t = await r.text();
+      if (r.status === 429 && /spending cap|spend cap|spend limit/i.test(t)) { useLimit(m, 'spend'); return 'spend'; }
+      if (r.status === 429 && /PerDay|per day|daily/i.test(t)) { useLimit(m, 'day'); return 'day'; }
+      if (r.status === 429) return 'minute';
+      return 'err';
+    } catch (e) { return 'err'; }
+  }
   const dayLimited = m => { const l = (usageToday().m[tierName(m)] || {}).limit; return l === 'day' || l === 'spend'; };
   async function throttle(model, signal) {
     const cap = RPM[describe(model).tier] || 9;
@@ -704,5 +721,5 @@ ${SETEUK_SYS}` });
     return { text: t, level: '분석', quotes: ['(모의) 1번 학생 답'] };
   }
 
-  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, detectForm, classify, sameQ, onUsage: f => useL.push(f) };
+  return { call, listModels, describe, recommend, extractPlan, makeGuide, grade, seteuk, isMock, usage, plan, makeKey, read, judge, pick, MODELS, usageToday, resetAt, orient, detectForm, classify, sameQ, onUsage: f => useL.push(f), clearLimits, probe };
 })();

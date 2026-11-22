@@ -2481,7 +2481,8 @@ function settingsModal() {
   const test = async quiet => {
     const key = $('#skey').value.trim();
     if (!key) { if (!quiet) $('#stestmsg').textContent = '키를 먼저 넣어 주세요.'; return; }
-    const tmp = App.settings(); tmp.apiKey = key; App.saveSettings(tmp);
+    const tmp = App.settings(); const changed = tmp.apiKey !== key; tmp.apiKey = key; App.saveSettings(tmp);
+    if (changed) AI.clearLimits(); // 이전 키의 한도 표시는 지움
     $('#stestmsg').textContent = '키 확인과 모델 목록을 불러오는 중…';
     try {
       const list = await AI.listModels();
@@ -2493,6 +2494,11 @@ function settingsModal() {
       const newest = list.find(m => !m.latest);
       $('#stestmsg').innerHTML = `<b style="color:var(--ok)">키가 맞습니다.</b> 쓸 수 있는 모델 ${list.length}개 · 가장 새 모델: ${esc(newest ? newest.label : '-')}` +
         (keep ? '' : `<br>추천 모델 <b>${esc(AI.describe(pick).label)}</b> 로 골랐습니다.`);
+      // 한도에 막혔는지 바로 확인(아주 짧은 요청 하나)
+      const pr = await AI.probe(); const el = $('#susage'); if (el) el.innerHTML = usageHTML(); renderQuota();
+      if (pr === 'spend') $('#stestmsg').innerHTML += `<br><b style="color:var(--bad)">이 키는 이번 달 지출 한도에 막혀 있어요.</b> ${spendRetry()} 이후 다시 쓰거나, 지출 한도를 올리거나 다른 키를 넣어 주세요.`;
+      else if (pr === 'day') $('#stestmsg').innerHTML += `<br><b style="color:var(--bad)">이 키는 오늘 무료 한도를 다 썼어요.</b> ${resetText()}에 다시 채워져요.`;
+      else if (pr === 'ok') $('#stestmsg').innerHTML += `<br><b style="color:var(--ok)">지금 바로 쓸 수 있어요</b>(한도 막힘 없음).`;
     } catch (e) { $('#stestmsg').innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
   };
   $('#stest').onclick = () => test(false);
