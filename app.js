@@ -2306,7 +2306,7 @@ function bgJob(o) {
 }
 const needOrient = cls => !cls.oriented && !(cls.masks || []).length && cls.pages.some(p => !p.oc && !p.skip) && !!(App.settings().apiKey || '').trim();
 function orientJob(cls) {
-  return bgJob({ key: 'orient:' + cls.id, title: `${cls.name} · 쪽 방향`, where: `#/k/${cls.id}/pages`, phase: '쪽 방향 확인 중…', run: async j => {
+  return bgJob({ key: 'orient:' + cls.id, title: `${(findClass(cls.id).task || {}).name || ''} · ${cls.name} · 쪽 방향`, where: `#/k/${cls.id}/pages`, phase: '쪽 방향 확인 중…', run: async j => {
     const n = await autoOrient(cls, m => { j.phase = m; renderJobs(); });
     cls.oriented = true; save();
     j.doneMsg = n ? `${n}쪽을 바로 세웠어요` : '모두 바른 방향이에요';
@@ -2316,7 +2316,7 @@ function orientJob(cls) {
 }
 // 시험지 형·정답표: 뒤에서 만들고, 다 되면 그 반을 보고 있으면 확인 창, 아니면 작업 칸의 '확인하기'
 function keyJob(task, cls, then) {
-  return bgJob({ key: 'key:' + cls.id, title: `${cls.name} · 정답표`, where: `#/k/${cls.id}`, phase: '시험지 형과 정답표 만드는 중… (30초 안팎)', run: async j => {
+  return bgJob({ key: 'key:' + cls.id, title: `${task.name} · ${cls.name} · 정답표`, where: `#/k/${cls.id}`, phase: '시험지 형과 정답표 만드는 중… (30초 안팎)', run: async j => {
     const oj = jobFor('orient:' + cls.id);
     if (oj) { j.phase = '쪽 방향을 맞추는 중이라 기다려요…'; renderJobs(); await oj.promise; }
     else if (needOrient(cls)) { j.phase = '쪽 방향 확인 중…'; renderJobs(); await autoOrient(cls, m => { j.phase = m; renderJobs(); }).catch(() => 0); cls.oriented = true; }
@@ -2926,7 +2926,7 @@ const ACT = {
     if (jobFor('grade:' + cls.id)) { toast('이 반은 이미 AI 채점 중입니다.'); return; }
     if (needPrep(task, cls) || (keyOf(task, cls) && !keyOf(task, cls).checked && e !== 'again')) { prepGrade(task, cls, () => ACT.batchgrade(el, 'again', items)); return; }
     const lv = task.strict || '보통';
-    const done = runBatch(`${cls.name} AI 채점(${lv}) — ${items.length}명`, items,
+    const done = runBatch(`${task.name} · ${cls.name} AI 채점(${lv}) — ${items.length}명`, items,
       async (no, sig) => { await runAIGrade(task, cls, no, sig); const st = cls.students[no]; return 'AI ' + aiScoreOf(task, st) + '점' + (st.seteuk ? ' · 세특 ' + App.bytes(st.seteuk) + 'B' : ''); },
       { key: 'grade:' + cls.id, kind: 'grade', clsId: cls.id, where: '#/k/' + cls.id,
  });
@@ -2938,7 +2938,7 @@ const ACT = {
     const items = only || []; if (!only) for (let no = 1; no <= cls.size; no++) { const s = cls.students[no]; const st = statusOf(cls, no); if (s && !s.seteuk && (st === '채점 완료' || st === 'AI 채점')) items.push(no); }
     if (!items.length) { toast('세특을 만들 학생이 없습니다(채점된 학생 중 세특이 빈 학생만 만듭니다).'); return; }
     if (jobFor('seteuk:' + cls.id)) { toast('이 반은 이미 세특을 만드는 중입니다.'); return; }
-    runBatch(`${cls.name} 세특 — ${items.length}명`, items, async (no, sig) => { const r = await runSeteuk(task, cls, no, sig); return r.b + 'B'; },
+    runBatch(`${task.name} · ${cls.name} 세특 — ${items.length}명`, items, async (no, sig) => { const r = await runSeteuk(task, cls, no, sig); return r.b + 'B'; },
       { key: 'seteuk:' + cls.id, kind: 'seteuk', clsId: cls.id, where: '#/k/' + cls.id });
   },
   xlsx(el) { xlsxClass(el.dataset.id); },
