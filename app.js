@@ -1237,6 +1237,13 @@ document.addEventListener('keydown', e => {
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); ACT.pall(); }
   else if (e.key === 'Delete' && G.psel && G.psel.size) { e.preventDefault(); ACT.pdel(); }
 });
+document.addEventListener('keydown', e => {
+  const m = location.hash.match(/^#\/k\/([^/]+)$/); if (!m || !$('#modal').classList.contains('hide')) return;
+  if (e.target.closest && e.target.closest('input,textarea,select')) return;
+  const { cls } = findClass(m[1]); if (!cls) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); if (!G.sel || G.sel.kid !== cls.id) G.sel = { kid: cls.id, set: new Set(), last: null }; selVisible(cls).forEach(n => G.sel.set.add(n)); selPaint(cls); }
+  else if (e.key === 'Escape' && G.sel && G.sel.set.size) { e.preventDefault(); G.sel = null; selPaint(cls); }
+});
 // 쪽 고르기(Ctrl·Shift·네모) · 끌어 옮기기
 function pageDrag(cls) {
   const box = $('#thumbs'); if (!box) return;
@@ -1414,7 +1421,7 @@ function vClass(kid) {
     const sf = s && s.form != null && s.form !== formOf(cls) ? s.form : null;
     const on = G.sel && G.sel.kid === cls.id && G.sel.set.has(no);
     return `<a class="item stu ${on ? 'sel' : ''}" href="#/g/${cls.id}/${no}" data-no="${no}">
-      <span class="no"><i class="ck" data-act="stusel" data-kid="${cls.id}" data-no="${no}" title="골라서 다시 채점·세특 (Shift: 사이 모두)"></i>${no}</span><span>${pillOf(st)}${sf != null ? ` <span class="pill ai" title="반과 다른 시험지 형">${esc(sf || '형 없음')}${sf ? '형' : ''}</span>` : ''}${s && s.formWarn ? ` <span class="pill bad" title="${esc(s.formWarn)}">시험지?</span>` : ''}${s && s.seteuk && s.seteukStale ? ' <span class="pill ai" title="채점 판단을 바꾼 뒤라 세특을 다시 써야 해요">세특 다시</span>' : ''}</span>
+      <span class="no" data-act="stusel" data-kid="${cls.id}" data-no="${no}" title="고르기 (Shift: 사이 모두 · Ctrl+A: 모두 · Esc: 풀기)"><i class="ck"></i>${no}</span><span>${pillOf(st)}${sf != null ? ` <span class="pill ai" title="반과 다른 시험지 형">${esc(sf || '형 없음')}${sf ? '형' : ''}</span>` : ''}${s && s.formWarn ? ` <span class="pill bad" title="${esc(s.formWarn)}">시험지?</span>` : ''}${s && s.seteuk && s.seteukStale ? ' <span class="pill ai" title="채점 판단을 바꾼 뒤라 세특을 다시 써야 해요">세특 다시</span>' : ''}</span>
       <span class="sc">${sc == null ? '<span class="faint">-</span>' : sc}${aisc != null && aisc !== sc ? `<small class="faint"> AI ${aisc}</small>` : ''}</span>
       <span class="pv">${s && s.seteuk ? esc(s.seteuk) : `<span class="faint">${sub ? '' : '답안 없음'}</span>`}</span>
       <span class="r">${b ? `<span class="bt ${b > max ? 'bad' : ''}">${b}B</span><button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="세특 복사">${ic('copy')}</button>` : ''}</span></a>`;
@@ -1459,21 +1466,23 @@ function vClass(kid) {
     <select class="mini" data-act-change="fsort" title="순서"><option value="no" ${F.sort === 'no' ? 'selected' : ''}>번호순</option><option value="score" ${F.sort === 'score' ? 'selected' : ''}>점수순</option><option value="ai" ${F.sort === 'ai' ? 'selected' : ''}>AI 점수순</option></select></div>
   <div class="selbar ${G.sel && G.sel.kid === cls.id && G.sel.set.size ? '' : 'hide'}" id="selbar">${selBarHTML(cls)}</div>
   ${F.q ? `<div class="stat">'${esc(F.q)}' 찾는 중 · ${nos.length}명 <button class="btn sm ghost" data-act="fclear">풀기</button></div>` : ''}
-  <div class="list">${rows || '<div class="empty">해당 학생이 없어요.</div>'}</div></div>
+  <div class="list">${rows ? `<div class="lhead"><span class="no" data-act="selvis" data-id="${cls.id}" title="보이는 학생 모두 고르기 / 풀기 (Ctrl+A · Esc)"><i class="ck" id="ckall"></i>번호</span><span>상태</span><span>점수</span><span>세특</span><span class="r">바이트</span></div>` : ''}${rows || '<div class="empty">해당 학생이 없어요.</div>'}</div></div>
   <aside class="kpeek" id="kpeek" data-kid="${cls.id}" data-first="${nextTodo || nos[0] || ''}"></aside></div>`;
 }
 // 목록에서 고른 학생: 다시 채점 · 세특 다시 쓰기
 function selBarHTML(cls) {
   const n = G.sel && G.sel.kid === cls.id ? G.sel.set.size : 0;
-  return `<b>${n}명</b> 골랐어요<span class="sp"></span>
-    <button class="btn sm primary" data-act="selgrade" data-id="${cls.id}">${ic('bot')}AI 채점 다시</button>
+  return `<b>${n}명</b> 골랐어요 <span class="small faint">Shift: 사이 모두 · Esc: 풀기</span><span class="sp"></span>
+    <button class="btn sm primary" data-act="selgrade" data-id="${cls.id}">${ic('bot')}${n && [...G.sel.set].every(no => statusOf(cls, no) === '채점 전') ? 'AI 채점' : 'AI 채점 다시'}</button>
     <button class="btn sm" data-act="selseteuk" data-id="${cls.id}">${ICON.wand}세특 다시 쓰기</button>
-    <button class="btn sm ghost" data-act="selall" data-id="${cls.id}" title="지금 보이는 학생 모두">보이는 학생 모두</button>
     <button class="btn sm ghost" data-act="selnone" data-id="${cls.id}">풀기</button>`;
 }
+function selVisible(cls) { return $$('.list .item.stu').map(r => Number(r.dataset.no)).filter(no => { const st = statusOf(cls, no); return st !== '미제출' && st !== '미응시'; }); }
 function selPaint(cls) {
   const set = G.sel && G.sel.kid === cls.id ? G.sel.set : new Set();
   $$('.list .item.stu').forEach(r => r.classList.toggle('sel', set.has(Number(r.dataset.no))));
+  const vis = selVisible(cls), k = vis.filter(n => set.has(n)).length, all = $('#ckall');
+  if (all) { all.classList.toggle('on', !!vis.length && k === vis.length); all.classList.toggle('some', k > 0 && k < vis.length); }
   const b = $('#selbar'); if (b) { b.innerHTML = selBarHTML(cls); b.classList.toggle('hide', !set.size); }
 }
 // 오른쪽 학생 미리보기: 점수 · 문항별 판단 · 세특 전체(목록에서 마우스를 올린 학생)
@@ -1736,7 +1745,7 @@ function vGrade(kid, no) {
         ${crit || `<p class="muted">채점 기준이 없어요. <a href="#/t/${task.id}">넣기</a></p>`}
         <div class="row" style="margin-top:12px;gap:6px">${chips}${specs}</div>
         <div class="row" style="margin-top:10px;justify-content:flex-end;gap:6px">
-          ${s.ai ? `<button class="btn sm" data-act="applyai">AI 점수 적용</button>` : ''}<button class="btn sm ghost" data-act="resetscore">초기화</button></div>
+          ${task.mode !== 'points' && task.criteria.length > 1 ? `<button class="btn sm ghost" data-act="allcheck" data-v="1" title="모든 기준 충족">모두 ✓</button><button class="btn sm ghost" data-act="allcheck" data-v="0" title="모든 기준 미충족">모두 ✗</button>` : ''}${s.ai ? `<button class="btn sm" data-act="applyai">AI 점수 적용</button>` : ''}<button class="btn sm ghost" data-act="resetscore">초기화</button></div>
       </div>
       <div class="gsec">
         <div class="sform"><span class="small muted">시험지 형</span>
@@ -2716,6 +2725,14 @@ const ACT = {
     } else set.has(no) ? set.delete(no) : set.add(no);
     G.sel.last = no; selPaint(cls);
   },
+  selvis(el, e) {
+    e && (e.preventDefault(), e.stopPropagation());
+    const { cls } = findClass(el.dataset.id); const vis = selVisible(cls);
+    if (!G.sel || G.sel.kid !== cls.id) G.sel = { kid: cls.id, set: new Set(), last: null };
+    const allOn = vis.length && vis.every(n => G.sel.set.has(n));
+    vis.forEach(n => allOn ? G.sel.set.delete(n) : G.sel.set.add(n));
+    selPaint(cls);
+  },
   selall(el) {
     const { cls } = findClass(el.dataset.id);
     if (!G.sel || G.sel.kid !== cls.id) G.sel = { kid: cls.id, set: new Set(), last: null };
@@ -3058,6 +3075,7 @@ const ACT = {
   },
   setscore(el) { const s = stu(gctx.cls, gctx.no); s.override = Number(el.dataset.v); s.special = null; save(); rerender(); },
   special(el) { const s = stu(gctx.cls, gctx.no); const v = Number(el.dataset.v); s.special = s.special === v ? null : v; save(); rerender(); },
+  allcheck(el) { const s = stu(gctx.cls, gctx.no); const v = el.dataset.v === '1'; s.checks = gctx.task.criteria.map(() => v); s.touched = true; s.override = null; s.special = null; if (s.seteuk) s.seteukStale = true; save(); rerender(); },
   resetscore() { const s = stu(gctx.cls, gctx.no); Object.assign(s, { checks: [], pts: [], touched: false, override: null, special: null, done: false }); save(); rerender(); },
   applyai() { const s = stu(gctx.cls, gctx.no); applyAI(gctx.task, s); save(); rerender(); toast('AI 판단을 적용했습니다.'); },
   copyfb() { const s = stu(gctx.cls, gctx.no); s.feedback = s.ai.feedback; save(); rerender(); },
