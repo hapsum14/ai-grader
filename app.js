@@ -2671,8 +2671,15 @@ const ACT = {
     };
     $('#bvp').onclick = () => { if (i > 0) { i--; show(); } };
     $('#bvn').onclick = () => { if (i < cls.pages.length - 1) { i++; show(); } };
-    const key = e => { if ($('#modal').classList.contains('hide')) { document.removeEventListener('keydown', key, true); return; } if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); $('#bvp').click(); } else if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); $('#bvn').click(); } };
-    document.addEventListener('keydown', key, true);
+    // 방향키는 한 번에 한 쪽씩(미리보기를 여러 번 열어도 처리기는 하나만)
+    if (window.__bvKey) document.removeEventListener('keydown', window.__bvKey, true);
+    const key = e => {
+      if ($('#modal').classList.contains('hide') || !$('#mbox').classList.contains('bigpv')) { document.removeEventListener('keydown', key, true); window.__bvKey = null; return; }
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault(); e.stopImmediatePropagation(); if (e.repeat && Date.now() - (key.t || 0) < 120) return; key.t = Date.now();
+      if (e.key === 'ArrowLeft') { if (i > 0) { i--; show(); } } else if (i < cls.pages.length - 1) { i++; show(); }
+    };
+    window.__bvKey = key; document.addEventListener('keydown', key, true);
     show();
   },
   masks(el) { maskModal(el.dataset.id); },
