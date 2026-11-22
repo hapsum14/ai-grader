@@ -1394,8 +1394,9 @@ function vClass(kid) {
     const sc = scoreOf(task, s), aisc = aiScoreOf(task, s);
     const b = s && s.seteuk ? App.bytes(s.seteuk) : 0;
     const sf = s && s.form != null && s.form !== formOf(cls) ? s.form : null;
-    return `<a class="item stu" href="#/g/${cls.id}/${no}" data-no="${no}">
-      <span class="no">${no}</span><span>${pillOf(st)}${sf != null ? ` <span class="pill ai" title="반과 다른 시험지 형">${esc(sf || '형 없음')}${sf ? '형' : ''}</span>` : ''}${s && s.formWarn ? ` <span class="pill bad" title="${esc(s.formWarn)}">시험지?</span>` : ''}${s && s.seteuk && s.seteukStale ? ' <span class="pill ai" title="채점 판단을 바꾼 뒤라 세특을 다시 써야 해요">세특 다시</span>' : ''}</span>
+    const on = G.sel && G.sel.kid === cls.id && G.sel.set.has(no);
+    return `<a class="item stu ${on ? 'sel' : ''}" href="#/g/${cls.id}/${no}" data-no="${no}">
+      <span class="no"><i class="ck" data-act="stusel" data-kid="${cls.id}" data-no="${no}" title="골라서 다시 채점·세특 (Shift: 사이 모두)"></i>${no}</span><span>${pillOf(st)}${sf != null ? ` <span class="pill ai" title="반과 다른 시험지 형">${esc(sf || '형 없음')}${sf ? '형' : ''}</span>` : ''}${s && s.formWarn ? ` <span class="pill bad" title="${esc(s.formWarn)}">시험지?</span>` : ''}${s && s.seteuk && s.seteukStale ? ' <span class="pill ai" title="채점 판단을 바꾼 뒤라 세특을 다시 써야 해요">세특 다시</span>' : ''}</span>
       <span class="sc">${sc == null ? '<span class="faint">-</span>' : sc}${aisc != null && aisc !== sc ? `<small class="faint"> AI ${aisc}</small>` : ''}</span>
       <span class="pv">${s && s.seteuk ? esc(s.seteuk) : `<span class="faint">${sub ? '' : '답안 없음'}</span>`}</span>
       <span class="r">${b ? `<span class="bt ${b > max ? 'bad' : ''}">${b}B</span><button class="ibtn" data-act="copyset" data-kid="${cls.id}" data-no="${no}" title="세특 복사">${ic('copy')}</button>` : ''}</span></a>`;
@@ -1441,9 +1442,24 @@ function vClass(kid) {
   <div class="tabs">${STATUS.map(([v, l]) => `<button class="tab ${F.status === v ? 'on' : ''}" data-act="fstatus" data-v="${esc(v)}">${TABL[v] || l}<b>${n[v]}</b></button>`).join('')}
     <span class="sp"></span>
     <select class="mini" data-act-change="fsort" title="순서"><option value="no" ${F.sort === 'no' ? 'selected' : ''}>번호순</option><option value="score" ${F.sort === 'score' ? 'selected' : ''}>점수순</option><option value="ai" ${F.sort === 'ai' ? 'selected' : ''}>AI 점수순</option></select></div>
+  <div class="selbar ${G.sel && G.sel.kid === cls.id && G.sel.set.size ? '' : 'hide'}" id="selbar">${selBarHTML(cls)}</div>
   ${F.q ? `<div class="stat">'${esc(F.q)}' 찾는 중 · ${nos.length}명 <button class="btn sm ghost" data-act="fclear">풀기</button></div>` : ''}
   <div class="list">${rows || '<div class="empty">해당 학생이 없어요.</div>'}</div></div>
   <aside class="kpeek" id="kpeek" data-kid="${cls.id}" data-first="${nextTodo || nos[0] || ''}"></aside></div>`;
+}
+// 목록에서 고른 학생: 다시 채점 · 세특 다시 쓰기
+function selBarHTML(cls) {
+  const n = G.sel && G.sel.kid === cls.id ? G.sel.set.size : 0;
+  return `<b>${n}명</b> 골랐어요<span class="sp"></span>
+    <button class="btn sm primary" data-act="selgrade" data-id="${cls.id}">${ic('bot')}AI 채점 다시</button>
+    <button class="btn sm" data-act="selseteuk" data-id="${cls.id}">${ICON.wand}세특 다시 쓰기</button>
+    <button class="btn sm ghost" data-act="selall" data-id="${cls.id}" title="지금 보이는 학생 모두">보이는 학생 모두</button>
+    <button class="btn sm ghost" data-act="selnone" data-id="${cls.id}">풀기</button>`;
+}
+function selPaint(cls) {
+  const set = G.sel && G.sel.kid === cls.id ? G.sel.set : new Set();
+  $$('.list .item.stu').forEach(r => r.classList.toggle('sel', set.has(Number(r.dataset.no))));
+  const b = $('#selbar'); if (b) { b.innerHTML = selBarHTML(cls); b.classList.toggle('hide', !set.size); }
 }
 // 오른쪽 학생 미리보기: 점수 · 문항별 판단 · 세특 전체(목록에서 마우스를 올린 학생)
 function peekHTML(task, cls, no) {
@@ -2466,11 +2482,53 @@ function settingsModal() {
 }
 
 // 오늘 쓴 양(모델별 요청 수·토큰)과 무료 한도 도달 여부
+// 무료로 쓸 수 있는 모델만(Flash · Gemini 4 Hydrogen · Flash-Lite). 유료 전용 Gemini 4(neon·carbon·argon)는 빼고, 그 밖의 모델은 쓴 적이 있을 때만
+const FREE_ROWS = ['Flash', 'Gemini 4 Hydrogen', 'Flash-Lite'];
+function usageRows() {
+  const u = AI.usageToday(), m = {};
+  Object.entries(u.m).forEach(([k, x]) => {
+    if (/^gemini-4-hydrogen$/i.test(k)) k = 'Gemini 4 Hydrogen';
+    if (/^gemini-4-(neon|carbon|argon)/i.test(k)) return;
+    const y = m[k]; if (!y) { m[k] = Object.assign({}, x); return; }
+    y.n += x.n; y.tin += x.tin; y.tout += x.tout; if (x.limit && (!y.limitAt || x.limitAt > y.limitAt)) Object.assign(y, { limit: x.limit, limitAt: x.limitAt, until: x.until });
+  });
+  FREE_ROWS.forEach(k => { m[k] = m[k] || { n: 0, tin: 0, tout: 0 }; });
+  const order = k => { const i = FREE_ROWS.indexOf(k); return i < 0 ? 9 : i; };
+  return Object.entries(m).filter(([k, x]) => FREE_ROWS.includes(k) || x.n).sort((a, b) => order(a[0]) - order(b[0]));
+}
+// 한도가 풀리기까지 남은 ms(0 = 풀림, null = 정해지지 않음 · 월 지출 한도)
+function limitLeft(x) {
+  if (!x || !x.limit) return 0;
+  if (x.limit === 'spend') return null;
+  const until = x.until || (x.limit === 'minute' ? (x.limitAt || 0) + 65000 : AI.resetAt().getTime());
+  return Math.max(0, until - Date.now());
+}
+const hms = ms => { const t = Math.ceil(ms / 1000), h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), sc = t % 60; return h ? `${h}:${String(m).padStart(2, '0')}:${String(sc).padStart(2, '0')}` : `${m}:${String(sc).padStart(2, '0')}`; };
+function limitPill(x) {
+  const left = limitLeft(x);
+  if (x.limit === 'spend') return '<span class="pill bad">월 지출 한도 — 매월 1일 풀림</span>';
+  if (!x.limit || !left) return '<span class="pill ok">쓸 수 있음</span>';
+  return x.limit === 'day' ? `<span class="pill bad">하루 한도 · <b class="cd">${hms(left)}</b> 뒤 채워짐</span>` : `<span class="pill ai">분당 한도 · <b class="cd">${hms(left)}</b> 뒤 풀림</span>`;
+}
 function usageHTML() {
-  const u = AI.usageToday(); const rows = Object.entries(u.m);
-  if (!rows.length) return '<p class="small muted" style="margin:0">오늘은 아직 쓰지 않았어요.</p>';
-  return `<div class="usage">${rows.map(([k, x]) => `<div class="ur"><b>${esc(k)}</b><span>${x.n}회</span><span class="faint">${Math.round((x.tin + x.tout) / 1000)}천 토큰</span>${x.limit === 'day' ? '<span class="pill bad">오늘 한도 다 씀</span>' : x.limit === 'minute' ? '<span class="pill ai">분당 한도 — 잠깐 기다리는 중</span>' : '<span class="pill ok">여유</span>'}</div>`).join('')}</div>
-    <p class="small faint" style="margin:6px 0 0">하루 한도는 <b>${resetText()}</b>에 다시 채워져요. 넘으면 다른 모델로 저절로 바꿔 이어 가요.</p>`;
+  const rows = usageRows();
+  return `<div class="usage">${rows.map(([k, x]) => `<div class="ur"><b>${esc(k)}</b><span>${x.n}회</span><span class="faint">${Math.round((x.tin + x.tout) / 1000)}천 토큰</span>${limitPill(x)}</div>`).join('')}</div>
+    <p class="small faint" style="margin:6px 0 0">하루 한도는 <b>${resetText()}</b>에 다시 채워져요. 넘으면 다른 모델로 저절로 바꿔 이어 가고, 풀리면 알려 드려요.</p>`;
+}
+// 1초마다: 남은 시간 고치기 + 한도가 풀린 모델을 알림
+let QLIVE = null;
+function quotaTick() {
+  if (typeof AI === 'undefined') return;
+  const now = new Set(usageRows().filter(([, x]) => x.limit && limitLeft(x) !== 0).map(([k]) => k));
+  if (QLIVE) {
+    const freed = [...QLIVE].filter(k => !now.has(k));
+    if (freed.length) {
+      toast(`✅ ${freed.join('·')} 한도가 풀렸어요. 다시 쓸 수 있어요.`, 7000);
+      try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification('AI 서논술형 채점', { body: `${freed.join('·')} 한도가 풀렸어요.` }); } catch (e) {}
+    }
+  }
+  QLIVE = now;
+  if (now.size || QLIVE.size) { renderQuota(); const el = $('#susage'); if (el) el.innerHTML = usageHTML(); }
 }
 // 다음 초기화 시각: '오늘 오후 5:00 (3시간 20분 뒤)'
 function resetText() {
@@ -2482,8 +2540,7 @@ function resetText() {
 }
 // 무료 한도를 쉽게 풀어 쓴 안내
 function quotaHelp(back) {
-  const u = AI.usageToday(); const rows = Object.entries(u.m);
-  const day = rows.filter(([, x]) => x.limit === 'day').map(([k]) => k);
+  const day = usageRows().filter(([, x]) => (x.limit === 'day' || x.limit === 'spend') && limitLeft(x) !== 0).map(([k]) => k);
   modal(`<h2>무료 한도 안내</h2>
     ${day.length ? `<div class="qh-now bad"><b>${esc(day.join('·'))}</b> 오늘 한도를 다 썼어요. <b>${resetText()}</b>에 다시 채워져요. 그 전까지는 다른 모델로 이어 가요.</div>`
       : `<div class="qh-now">지금은 여유가 있어요. 다음 초기화: <b>${resetText()}</b></div>`}
@@ -2491,7 +2548,7 @@ function quotaHelp(back) {
       <div class="qhr"><b>한도는 두 가지</b><span><b>분당</b>: 1분에 보낼 수 있는 요청 수 — 넘으면 1분 안에 저절로 풀려요(앱이 기다렸다 이어 감).<br><b>하루</b>: 하루에 보낼 수 있는 요청 수 — 넘으면 다음 초기화 때까지 그 모델은 쉬어요.</span></div>
       <div class="qhr"><b>언제 다시 채워지나</b><span>하루 한도는 미국 태평양 시각 자정에 초기화돼요. 한국 시각으로 <b>오후 5시</b>(3~11월 초 서머타임 때는 <b>오후 4시</b>)예요.</span></div>
       <div class="qhr"><b>얼마나 쓰나</b><span>학생 1명 채점 = 요청 약 2번(답 읽기 1 + 판단 1), 세특 1명 = 1번. 계획서 읽기 = 1~2번.<br>무료 한도는 모델마다 하루 수백~천 번 안팎이라 보통 한 반(30명 안팎)은 넉넉해요.</span></div>
-      <div class="qhr"><b>넘으면 어떻게</b><span>앱이 Flash ↔ Flash-Lite 로 저절로 바꿔 이어 가요. 둘 다 다 쓰면 초기화 뒤 남은 학생만 이어서 하면 돼요(한 결과는 저장돼 있어요).</span></div>
+      <div class="qhr"><b>넘으면 어떻게</b><span>앱이 Flash ↔ Gemini 4 Hydrogen ↔ Flash-Lite 로 저절로 바꿔 이어 가요. 일괄 채점은 한도가 풀릴 때까지 기다렸다 그 학생부터 이어 가고, 풀리면 알려 드려요(위쪽 단추에 남은 시간). 둘 다 다 쓰면 초기화 뒤 남은 학생만 이어서 하면 돼요(한 결과는 저장돼 있어요).</span></div>
       <div class="qhr"><b>한도를 늘리려면</b><span>Google AI Studio 에서 결제(유료)를 등록하면 크게 늘어나요. 무료로 쓸 때는 필요 없어요.</span></div>
     </div>
     <p class="small faint" style="margin:10px 0 0">정확한 숫자는 Google 이 모델·계정마다 정하고 바꿀 수 있어요. <a href="https://aistudio.google.com/docs/rate-limits" target="_blank" rel="noopener">Google 원문 ↗</a></p>
@@ -2499,13 +2556,15 @@ function quotaHelp(back) {
 }
 function renderQuota() {
   const b = $('#quota'); if (!b || typeof AI === 'undefined') return;
-  const u = AI.usageToday(); const rows = Object.entries(u.m);
-  const day = rows.filter(([, x]) => x.limit === 'day').map(([k]) => k), min = rows.filter(([, x]) => x.limit === 'minute' && Date.now() - x.limitAt < 70000).map(([k]) => k);
+  const rows = usageRows();
+  const lim = rows.filter(([, x]) => x.limit && limitLeft(x) !== 0);
   const n = rows.reduce((t, [, x]) => t + x.n, 0);
-  b.classList.toggle('hide', !n); b.classList.toggle('warn', !!(day.length || min.length));
-  b.innerHTML = `${ic('bot')}<span class="lb">${day.length ? `${day.join('·')} 한도 다 씀` : min.length ? '분당 한도 대기' : `오늘 ${n}회`}</span>`;
-  b.title = rows.map(([k, x]) => `${k}: ${x.n}회${x.limit === 'day' ? ' (오늘 한도 다 씀)' : ''}`).join('\n') + `\n초기화: ${resetText()}\n누르면 무료 한도 안내`;
-  if (day.length) b.querySelector('.lb').textContent = `${day.join('·')} 한도 다 씀 · ${resetText().replace(/\(.*\)/, '')} 초기화`;
+  b.classList.toggle('hide', !n && !lim.length); b.classList.toggle('warn', !!lim.length);
+  // 정확도용(Flash·Hydrogen)이 모두 막혔는지, 가장 먼저 풀리는 것
+  const soon = lim.filter(([, x]) => limitLeft(x) != null).sort((a, c) => limitLeft(a[1]) - limitLeft(c[1]))[0];
+  const spend = lim.find(([, x]) => x.limit === 'spend');
+  b.innerHTML = `${ic('bot')}<span class="lb">${spend ? '월 지출 한도' : soon ? `${esc(soon[0])} 한도 · ${hms(limitLeft(soon[1]))}` : `오늘 ${n}회`}</span>`;
+  b.title = rows.map(([k, x]) => `${k}: ${x.n}회${x.limit && limitLeft(x) !== 0 ? (x.limit === 'spend' ? ' (월 지출 한도)' : ` (${hms(limitLeft(x))} 뒤 풀림)`) : ''}`).join('\n') + `\n하루 초기화: ${resetText()}\n누르면 무료 한도 안내`;
 }
 
 /* ================= 도움말 ================= */
@@ -2613,6 +2672,26 @@ const ACT = {
     inp.onchange = () => inp.files[0] && startPlan({ file: inp.files[0] });
     inp.click();
   },
+  stusel(el, e) {
+    e && (e.preventDefault(), e.stopPropagation());
+    const { cls } = findClass(el.dataset.kid); const no = Number(el.dataset.no);
+    if (!G.sel || G.sel.kid !== cls.id) G.sel = { kid: cls.id, set: new Set(), last: null };
+    const set = G.sel.set;
+    if (e && e.shiftKey && G.sel.last != null) {
+      const ids = $$('.list .item.stu').map(r => Number(r.dataset.no)); const a = ids.indexOf(G.sel.last), b = ids.indexOf(no);
+      if (a >= 0 && b >= 0) { const on = !set.has(no); ids.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(n => on ? set.add(n) : set.delete(n)); }
+    } else set.has(no) ? set.delete(no) : set.add(no);
+    G.sel.last = no; selPaint(cls);
+  },
+  selall(el) {
+    const { cls } = findClass(el.dataset.id);
+    if (!G.sel || G.sel.kid !== cls.id) G.sel = { kid: cls.id, set: new Set(), last: null };
+    $$('.list .item.stu').forEach(r => { const no = Number(r.dataset.no); const st = statusOf(cls, no); if (st !== '미제출' && st !== '미응시') G.sel.set.add(no); });
+    selPaint(cls);
+  },
+  selnone(el) { const { cls } = findClass(el.dataset.id); G.sel = null; selPaint(cls); },
+  selgrade(el) { const { cls } = findClass(el.dataset.id); if (!G.sel || !G.sel.set.size) return; ACT.regrade({ dataset: { id: cls.id }, pre: [...G.sel.set] }); },
+  selseteuk(el) { const { cls } = findClass(el.dataset.id); if (!G.sel || !G.sel.set.size) return; ACT.reseteuk({ dataset: { id: cls.id }, pre: [...G.sel.set] }); },
   async copyset(el, e) {
     e && e.preventDefault();
     const { cls } = findClass(el.dataset.kid); const s = cls.students[Number(el.dataset.no)];
@@ -2813,11 +2892,11 @@ const ACT = {
     const { task, cls } = findClass(el.dataset.id);
     const nos = []; for (let no = 1; no <= cls.size; no++) { const st = statusOf(cls, no); if (st !== '미제출' && st !== '미응시') nos.push(no); }
     if (!nos.length) { toast('채점할 답안이 없어요.'); return; }
-    const sel = new Set(nos.filter(no => statusOf(cls, no) !== '채점 완료'));
-    const tag = no => ({ '채점 완료': '완료', 'AI 채점': '확인', '채점 전': '전' }[statusOf(cls, no)] || '');
+    const sel = new Set(el.pre ? nos.filter(no => el.pre.includes(no)) : nos.filter(no => statusOf(cls, no) !== '채점 완료'));
+    const tag = no => ({ '채점 완료': '완료', 'AI 채점': '확인', '채점 전': '전' }[statusOf(cls, no)] || '') + (cls.students[no] && !cls.students[no].seteuk ? '·세특 없음' : '');
     pickModal({
       title: 'AI 채점 다시', note: "고른 학생만 다시 채점해요. '채점 완료'한 학생은 점수 그대로, AI 판단만 새로.",
-      nos, sel, tag, quick: [['확인 필요', no => statusOf(cls, no) !== '채점 완료'], ['채점 완료', no => statusOf(cls, no) === '채점 완료']],
+      nos, sel, tag, quick: [['확인 필요', no => statusOf(cls, no) !== '채점 완료'], ['세특 없는 학생', no => !(cls.students[no] || {}).seteuk], ['채점 완료', no => statusOf(cls, no) === '채점 완료']],
       extra: `<div class="row" style="margin-top:12px"><span class="small muted">채점 기준</span>${strictSeg(task)}<span class="sp"></span><button class="lnk" data-act="keyview" data-id="${cls.id}">정답표 보기</button></div>
         <label class="f" style="margin-top:12px">채점 방향 메모 <span class="faint small">— AI 가 가장 먼저 따라요</span></label>
         <textarea class="in" id="rgdir" rows="2" placeholder="예) 물어본 것에 성실히 답하고 칸을 채웠으면 충족(내용의 깊이는 보지 않음)">${esc(task.question || '')}</textarea>
@@ -2826,7 +2905,7 @@ const ACT = {
       run: items => {
         cls._reuse = reread ? null : new Set(items);
         items.forEach(no => { const s = stu(cls, no); if (!s.done) Object.assign(s, { touched: false, override: null, special: null, checks: [], pts: [], creason: null }); });
-        save(); ACT.batchgrade({ dataset: { id: cls.id } }, null, items);
+        save(); G.sel = null; ACT.batchgrade({ dataset: { id: cls.id } }, null, items);
       },
     });
     let reread = false; const rg = $('#rgread'); if (rg) rg.onchange = () => { reread = rg.checked; };
@@ -2844,10 +2923,10 @@ const ACT = {
     if (!nos.length) { toast('먼저 채점해 주세요.'); return; }
     pickModal({
       title: '세특 다시 쓰기', note: edited.size ? `고른 학생만 새로 써요. 직접 고친 세특(${edited.size}명, '고침')은 빼 두었어요.` : '고른 학생만 새로 써요.',
-      nos, sel: new Set(nos.filter(no => !edited.has(no))), tag: no => edited.has(no) ? '고침' : (cls.students[no].seteuk ? '' : '없음'),
+      nos, sel: new Set(el.pre ? nos.filter(no => el.pre.includes(no)) : nos.filter(no => !edited.has(no))), tag: no => edited.has(no) ? '고침' : (cls.students[no].seteuk ? '' : '없음'),
       quick: [['세특 없는 학생', no => !cls.students[no].seteuk], ['직접 고친 것 빼고', no => !edited.has(no)]],
       go: `${ICON.wand}다시 쓰기`,
-      run: items => ACT.batchseteuk({ dataset: { id: cls.id } }, null, items),
+      run: items => { G.sel = null; ACT.batchseteuk({ dataset: { id: cls.id } }, null, items); },
     });
   },
   glogin() { closeModal(true); Sync.login().then(() => rerender()); },
@@ -3202,5 +3281,5 @@ function renderGsync() {
     renderQuota(); const el = $('#susage'); if (el) el.innerHTML = usageHTML();
     if (ev && ev.kind === 'day') toast(`${ev.model} 오늘 무료 한도를 다 써서 ${ev.next || '다른 모델'}(으)로 이어 가요.`, 5000);
   });
-  renderQuota(); setInterval(renderQuota, 15000);
+  renderQuota(); setInterval(quotaTick, 1000);
 })();

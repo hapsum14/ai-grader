@@ -29,8 +29,14 @@ const AI = (() => {
   const tierName = m => { if (m === 'gemini-4-hydrogen') return 'Gemini 4 Hydrogen'; const d = describe(m); return d.tier === 'flash-lite' ? 'Flash-Lite' : d.tier === 'pro' ? 'Pro' : d.tier === 'flash' ? 'Flash' : m; };
   function useRow(u, model) { const k = tierName(model); return (u.m[k] = u.m[k] || { n: 0, tin: 0, tout: 0 }); }
   function useAdd(model, um) { const u = usageToday(); const x = useRow(u, model); x.n++; if (um) { x.tin += Number(um.promptTokenCount) || 0; x.tout += (Number(um.candidatesTokenCount) || 0) + (Number(um.thoughtsTokenCount) || 0); } if (x.limit === 'minute') delete x.limit; useSave(u); }
-  function useLimit(model, kind, next) { const u = usageToday(); const x = useRow(u, model); x.limit = kind; x.limitAt = Date.now(); useSave(u, { model: tierName(model), kind, next: next && tierName(next) }); }
-  const dayLimited = m => (usageToday().m[tierName(m)] || {}).limit === 'day';
+  function useLimit(model, kind, next, until) {
+    const u = usageToday(); const x = useRow(u, model); x.limit = kind; x.limitAt = Date.now();
+    x.until = until || (kind === 'minute' ? Date.now() + 65000 : kind === 'day' ? resetAt().getTime() : null);
+    useSave(u, { model: tierName(model), kind, next: next && tierName(next) });
+  }
+  // 분당 한도로 잠깐 막힌 모델(풀릴 때까지)
+  const busyNow = m => { const x = usageToday().m[tierName(m)]; return !!(x && x.limit === 'minute' && (x.until || (x.limitAt || 0) + 65000) > Date.now()); };
+  const dayLimited = m => { const l = (usageToday().m[tierName(m)] || {}).limit; return l === 'day' || l === 'spend'; };
   async function throttle(model, signal) {
     const cap = RPM[describe(model).tier] || 9;
     const a = sent[model] = (sent[model] || []).filter(t => Date.now() - t < 60000);
@@ -142,16 +148,24 @@ const AI = (() => {
       if (r.status === 429) {
         // 결제 프로젝트의 '월 지출 한도'에 닿으면 모든 모델이 막힌다 → 기다리지 말고 바로 알린다
         if (/spending cap|spend cap|spend limit/i.test(msg)) {
-          useLimit(model, 'day');
+          useLimit(model, 'spend');
           throw new Error('이 API 키 프로젝트의 이번 달 지출 한도(결제 한도)에 닿아 Google 이 사용을 막았어요. AI Studio → 지출에서 한도를 올리거나, 결제가 없는 무료 키로 바꿔 주세요. (매월 1일에 다시 풀려요)');
         }
         // 무료 한도: 분당 한도면 알려 준 시간만큼 기다렸다 같은 모델로(최대 2번), 하루 한도면 다른 모델로
         const det = JSON.stringify((errj && errj.details) || []) + ' ' + msg;
         const perDay = /PerDay|per day|daily/i.test(det);
         const rd = Number((det.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/) || [])[1]);
+        if (!perDay) { // 여유 있는 다른 모델이 있으면 기다리지 않고 바로 바꿈
+          const alt = fallback(model, tried);
+          if (alt) {
+            useLimit(model, 'minute', alt, Date.now() + Math.min(60, rd || 60) * 1000);
+            opts.onWait && opts.onWait(0, describe(alt).label, 'quota');
+            return call(Object.assign({}, opts, { _model: alt, _tried: tried.concat(alt), _noThink: false }), retried);
+          }
+        }
         if (!perDay && attempt < 2) {
           const w = Math.min(60, rd || 15) * 1000;
-          useLimit(model, 'minute');
+          useLimit(model, 'minute', null, Date.now() + w);
           opts.onWait && opts.onWait(Math.round(w / 1000), null, 'quota');
           await sleep(w, signal); continue;
         }
@@ -204,7 +218,7 @@ const AI = (() => {
     ids = ['gemini-flash-latest', HYD, 'gemini-flash-lite-latest'].concat(ids.filter(i => describe(i).ver >= 3 && i !== HYD));
     const cur = describe(model);
     const plain = /^gemini-(\d+(\.\d+)?-(pro|flash|flash-lite)(-\d{3})?|(pro|flash|flash-lite)-latest)$/;
-    const ok = d => !tried.includes(d.id) && (plain.test(d.id) || d.id === HYD) && (d.latest || d.id === HYD || (d.ver >= 3 && !d.preview)) && !dayLimited(d.id) &&
+    const ok = d => !tried.includes(d.id) && (plain.test(d.id) || d.id === HYD) && (d.latest || d.id === HYD || (d.ver >= 3 && !d.preview)) && !dayLimited(d.id) && !busyNow(d.id) &&
       (d.tier === 'flash' || d.tier === 'flash-lite' || (d.tier === 'pro' && cur.tier === 'pro'));
     const list = sortModels(ids).filter(ok);
     // fast: 답이 늦을 때 — 생각하기가 짧은 Flash-Lite 를 먼저
@@ -381,7 +395,7 @@ const AI = (() => {
   // Flash 급 두 모델 가운데 오늘 한도가 남았고 덜 쓴 쪽. 둘 다 막혔으면 Flash-Lite
   function flashPick() {
     const u = usageToday();
-    const c = [MODELS.flash, MODELS.hyd].filter(m => !dayLimited(m));
+    const c = [MODELS.flash, MODELS.hyd].filter(m => !dayLimited(m) && !busyNow(m));
     if (!c.length) return MODELS.lite;
     c.sort((a, b) => ((u.m[tierName(a)] || {}).n || 0) - ((u.m[tierName(b)] || {}).n || 0));
     return c[0];
