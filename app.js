@@ -259,29 +259,47 @@ function scoreChoices(task) {
   if (task.mode === 'points') { for (let v = task.maxScore; v >= 0; v--) set.add(v); }
   return [...set].filter(v => v != null).sort((a, b) => b - a);
 }
-function rebuildSubs(cls) {
-  const old = new Map(cls.subs.map(s => [s.pages[0], s]));
+// 학생 묶음 다시 만들기. 번호는 쪽을 따라간다(한 학생을 고쳐도 다른 학생 번호는 그대로).
+// renumber: '이대로 다시 나누기'·미응시 표시처럼 처음부터 차례로 다시 매길 때만
+function subPids(cls) { cls.subs.forEach(x => { if (!x.pids) x.pids = x.pages.map(i => (cls.pages[i] || {}).id); }); }
+function rebuildSubs(cls, renumber) {
+  subPids(cls);
   const groups = []; let cur = null;
   cls.pages.forEach((p, i) => {
     if (p.skip) return;
     if (!cur || cls.starts.includes(i)) { cur = { pages: [] }; groups.push(cur); }
     cur.pages.push(i);
   });
-  const used = new Set();
-  groups.forEach(g => { const o = old.get(g.pages[0]); if (o && o.fixed) { g.no = o.no; g.fixed = true; used.add(o.no); } });
   const absent = no => cls.students[no] && cls.students[no].status === '미응시';
+  const used = new Set();
+  const old = cls.subs.map(x => ({ no: x.no, fixed: !!x.fixed, first: x.pids[0], set: new Set(x.pids) }));
+  const take = (g, o) => { g.no = o.no; g.fixed = o.fixed; used.add(o.no); o.taken = true; };
+  // 1) 첫 쪽이 같은 학생(고정 번호 먼저)
+  [true, false].forEach(fx => groups.forEach(g => {
+    if (g.no != null) return; const pid = cls.pages[g.pages[0]].id;
+    const o = old.find(x => !x.taken && x.fixed === fx && x.first === pid && !used.has(x.no));
+    if (o && (fx || !renumber)) take(g, o);
+  }));
+  if (!renumber) {
+    // 2) 쪽이 가장 많이 겹치는 학생의 번호
+    groups.forEach(g => {
+      if (g.no != null) return; let best = null, bn = 0;
+      old.forEach(x => { if (x.taken || used.has(x.no)) return; const n = g.pages.filter(i => x.set.has(cls.pages[i].id)).length; if (n > bn) { bn = n; best = x; } });
+      if (best) take(g, best);
+    });
+  }
+  // 3) 나머지: 아직 안 쓴 번호 중 가장 작은 것(미응시 번호는 건너뜀)
   let n = 1;
-  groups.forEach(g => { if (g.fixed) return; while (used.has(n) || absent(n)) n++; g.no = n; used.add(n); n++; });
-  cls.subs = groups.map(g => ({ id: uid(), no: g.no, fixed: !!g.fixed, pages: g.pages }));
+  groups.forEach(g => { if (g.no != null) return; while (used.has(n) || absent(n)) n++; g.no = n; g.fixed = false; used.add(n); n++; });
+  cls.subs = groups.map(g => ({ id: uid(), no: g.no, fixed: !!g.fixed, pages: g.pages, pids: g.pages.map(i => cls.pages[i].id) }));
 }
 // 쪽 지우기: 남은 쪽의 '새 학생' 표시와 고정 번호는 그 쪽을 따라간다(그림은 다음에 열 때 정리)
 function removePages(cls, drop) {
   const startObjs = new Set(cls.starts.map(i => cls.pages[i]));
-  const fixedBy = new Map(cls.subs.filter(x => x.fixed).map(x => [cls.pages[x.pages[0]], x.no]));
+  subPids(cls);
   const keep = cls.pages.filter(p => !drop(p));
   cls.pages = keep;
   cls.starts = keep.map((p, i) => startObjs.has(p) ? i : -1).filter(i => i >= 0);
-  cls.subs = [...fixedBy].filter(([p]) => keep.includes(p)).map(([p, no]) => ({ id: uid(), no, fixed: true, pages: [keep.indexOf(p)] }));
   rebuildSubs(cls);
 }
 function attachZoom(box, im, zi, zo, zf) {
@@ -309,7 +327,7 @@ function movePages(cls, idxs, target, afterIt, keepStart) {
   const firstLive = cls.pages.findIndex(p => !p.skip);
   const newStudent = keepStart || (!afterIt && (target === firstLive || cls.starts.includes(target)));
   const startObjs = new Set(cls.starts.map(i => cls.pages[i]));
-  const fixedBy = new Map(cls.subs.filter(x => x.fixed).map(x => [cls.pages[x.pages[0]], x.no]));
+  subPids(cls);
   const moving = cls.pages.filter((_, i) => pick.has(i));
   const rest = cls.pages.filter((_, i) => !pick.has(i));
   let at = rest.indexOf(cls.pages[target]) + (afterIt ? 1 : 0);
@@ -319,7 +337,6 @@ function movePages(cls, idxs, target, afterIt, keepStart) {
   cls.pages = order;
   cls.starts = order.map((p, i) => startObjs.has(p) ? i : -1).filter(i => i >= 0);
   // 고정 번호는 첫 쪽을 따라간다(rebuildSubs 가 첫 쪽 자리로 찾음)
-  cls.subs = [...fixedBy].map(([p, no]) => ({ id: uid(), no, fixed: true, pages: [order.indexOf(p)] }));
   rebuildSubs(cls);
   return { newStudent, idx: moving.map(p => order.indexOf(p)) };
 }
@@ -372,6 +389,7 @@ async function autoOrient(cls, onMsg) {
 // 같은 학생 안에서 쪽 순서 바꾸기: 그 학생 쪽들의 자리는 그대로 두고 순서만 바꾼다(첫 자리가 늘 학생의 첫 쪽)
 function reorderInGroup(cls, g, from, to, after) {
   if (from == null || from === to) return false;
+  subPids(cls);
   const pos = g.pages.slice(); const objs = pos.map(i => cls.pages[i]);
   const f = pos.indexOf(from), t0 = pos.indexOf(to); if (f < 0 || t0 < 0) return false;
   const [m] = objs.splice(f, 1); let t = objs.indexOf(cls.pages[to]) + (after ? 1 : 0); objs.splice(t, 0, m);
@@ -397,7 +415,7 @@ function splitEvery(cls, k) {
   cls.starts = []; let c = 0;
   cls.pages.forEach((p, i) => { if (p.skip) return; if (c % k === 0) cls.starts.push(i); c++; });
   cls.subs.forEach(s => s.fixed = false);
-  rebuildSubs(cls);
+  rebuildSubs(cls, true);
 }
 const noLabel = no => 'No.' + String(no).padStart(2, '0');
 async function aiImages(cls, sub) {
@@ -1145,7 +1163,9 @@ function vPages(kid) {
   after = () => {
     loadThumbs();
     $$('[data-act="setno"]').forEach(el => el.addEventListener('change', () => {
-      snap(`번호 ${el.value} 정하기`); const s = startNo[Number(el.dataset.i)]; s.no = Number(el.value); s.fixed = true; rebuildSubs(cls); save(); rerender();
+      snap(`번호 ${el.value} 정하기`); const s = startNo[Number(el.dataset.i)]; const nv = Number(el.value);
+      const other = cls.subs.find(x => x !== s && x.no === nv); if (other) { other.no = s.no; other.fixed = true; } // 겹치면 서로 바꾸기
+      s.no = nv; s.fixed = true; rebuildSubs(cls); save(); rerender();
     }));
     pageDrag(cls);
   };
@@ -2706,7 +2726,7 @@ const ACT = {
     const { cls } = gPages(); const no = Number(el.dataset.no); const s = stu(cls, no);
     s.status = s.status === '미응시' ? '' : '미응시';
     cls.subs.forEach(x => { if (!x.fixed) return; if (x.no === no && s.status === '미응시') x.fixed = false; });
-    rebuildSubs(cls); save(); rerender();
+    rebuildSubs(cls, true); save(); rerender();
   },
   async bigpage(el) {
     const { cls } = gPages(); let i = Number(el.dataset.i);
