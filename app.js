@@ -629,6 +629,24 @@ function classBadge(task, cls) {
   if (n['AI 채점']) return `<b class="kbadge ai" title="채점·세특은 다 됐어요. 선생님 확인이 ${n['AI 채점']}명 남았어요">확인 ${n['AI 채점']}</b>`;
   return `<b class="kbadge ok" title="모든 학생 채점·세특·확인이 끝났어요">✓ 모두 확인</b>`;
 }
+// 같은 과목인지: 이름(띄어쓰기·괄호 무시)과, 둘 다 적혀 있으면 학년도·학기까지 같아야
+const courseKey = c => String(c.name || '').replace(/\s|\(.*?\)/g, '').toLowerCase();
+function sameCourse(a, b) {
+  if (!courseKey(a) || courseKey(a) !== courseKey(b)) return false;
+  if (a.year && b.year && String(a.year) !== String(b.year)) return false;
+  if (a.semester && b.semester && String(a.semester) !== String(b.semester)) return false;
+  return true;
+}
+// 이미 둘로 나뉜 같은 과목은 하나로 모은다(앞에 있는 과목에 수행평가를 옮김)
+function mergeSameCourses() {
+  let n = 0;
+  for (let i = 0; i < S.courses.length; i++) for (let k = S.courses.length - 1; k > i; k--) {
+    const a = S.courses[i], b = S.courses[k];
+    if (!sameCourse(a, b)) continue;
+    b.tasks.forEach(t => a.tasks.push(t)); S.courses.splice(k, 1); n++;
+  }
+  return n;
+}
 function doneCount(cls) { const n = classCounts(cls); return n['채점 완료'] + n['미제출'] + n['미응시']; }
 function courseMeta(c) {
   const y = String(c.year || '').replace(/학년도/g, '').trim(), g = String(c.grade || '').replace(/학년/g, '').trim(), m = String(c.semester || '').replace(/학기/g, '').trim();
@@ -847,6 +865,14 @@ async function startPlan(src) {
       }),
     };
     if (!c.tasks.length) throw new Error('수행평가 영역을 찾지 못했습니다. 계획서 내용을 확인해 주세요.');
+    const same = S.courses.find(x => sameCourse(x, c));
+    if (same) { // 같은 과목이 이미 있으면 그 과목에 더하기(이름이 같은 수행평가가 있으면 '(새)'를 붙임)
+      c.tasks.forEach(t => { if (same.tasks.some(x => x.name === t.name)) t.name += ' (새)'; same.tasks.push(t); });
+      if (!same.planText) Object.assign(same, { planName: c.planName, planText: c.planText });
+      save(true); delete $('#modal').dataset.lock; closeModal();
+      toast(`이미 있는 '${same.name}' 과목에 수행평가 ${c.tasks.length}개를 더했어요. 채점 기준을 확인해 주세요.`, 4000);
+      location.hash = '#/t/' + c.tasks[0].id; return;
+    }
     S.courses.unshift(c); save(true);
     delete $('#modal').dataset.lock; closeModal();
     toast(`${Math.round((Date.now() - t0) / 1000)}초 만에 수행평가 ${c.tasks.length}개를 찾았습니다. 채점 기준을 확인해 주세요.`, 3500);
@@ -2264,14 +2290,14 @@ function renderJobs() {
       : j.phase || `${n}/${j.total}명 · 성공 ${j.ok}${j.fail ? ', 실패 ' + j.fail : ''}`;
     if (j.one) return `<div class="job${j.done ? ' done' : ''}">
       <div class="jh"><span class="spin${j.done ? ' hide' : ''}"></span><b>${esc(j.title)}</b><span class="sp"></span>${j.done ? `<button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button>` : j.waitKind ? `<button class="btn sm" data-act="jobstop" data-j="${j.id}">멈추기</button>` : ''}</div>
-      <div class="jm">${esc(head)}${j.where && location.hash !== j.where ? ` · <a href="${j.where}">반 화면</a>` : ''}</div>
+      <div class="jm">${esc(head)}${!j.done && j.el > 5 ? ` <span class="faint">· ${j.el >= 60 ? Math.floor(j.el / 60) + '분 ' : ''}${j.el % 60}초째</span>` : ''}${j.where && location.hash !== j.where ? ` · <a href="${j.where}">반 화면</a>` : ''}</div>
       ${j.done ? (j.onBtn ? `<div class="row" style="gap:6px;margin-top:6px"><button class="btn sm primary" data-act="jobbtn" data-j="${j.id}">${esc(j.btnLabel || '열기')}</button></div>` : '') : '<div class="prog indet"><i></i></div>'}</div>`;
     return `<div class="job${j.done ? ' done' : ''}">
       <div class="jh"><span class="spin${j.done ? ' hide' : ''}"></span><b>${esc(j.title)}</b><span class="sp"></span>
         <button class="ibtn" data-act="jobtoggle" data-j="${j.id}" title="기록 보기">${j.open ? '▾' : '▸'}</button>
         ${j.done ? `<button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button>`
           : `<button class="btn sm" data-act="jobstop" data-j="${j.id}">멈추기</button>`}</div>
-      <div class="jm">${esc(head)}${j.where && location.hash !== j.where ? ` · <a href="${j.where}">반 화면</a>` : ''}</div>
+      <div class="jm">${esc(head)}${!j.done && j.el > 5 ? ` <span class="faint">· ${j.el >= 60 ? Math.floor(j.el / 60) + '분 ' : ''}${j.el % 60}초째</span>` : ''}${j.where && location.hash !== j.where ? ` · <a href="${j.where}">반 화면</a>` : ''}</div>
       <div class="prog"><i style="width:${j.done ? 100 : pct}%"></i></div>
       ${j.open ? `<div class="jl">${j.log.slice(-40).map(esc).join('<br>') || '…'}</div>` : ''}</div>`;
   }).join('');
@@ -2293,6 +2319,7 @@ function bgJob(o) {
   const cur = jobFor(o.key); if (cur) return cur.promise;
   const j = { id: uid(), key: o.key, title: o.title, total: 0, ok: 0, fail: 0, log: [], done: false, open: false, where: o.where || '', phase: o.phase || '준비 중…', ctl: new AbortController(), one: true };
   JOBS.push(j); BUSY++; renderJobs();
+  const t0 = Date.now(), tk = setInterval(() => { if (j.done) { clearInterval(tk); return; } j.el = Math.round((Date.now() - t0) / 1000); renderJobs(); }, 1000);
   j.promise = (async () => {
     try { for (let tryN = 0; ; tryN++) {
       try { await o.run(j); break; }
@@ -3371,6 +3398,7 @@ function renderGsync() {
     let last = ''; try { last = localStorage.getItem('aigrader-route') || ''; } catch (e) {}
     if (last && last !== '#/' && routeAlive(last)) { history.replaceState(null, '', last); toast('지난번에 보던 화면에서 이어 갑니다.', 2500); }
   }
+  try { const m = mergeSameCourses(); if (m) { save(); setTimeout(() => toast(`이름이 같은 과목 ${m}개를 하나로 모았어요.`, 3500), 1500); } } catch (e) {}
   // 예전 '다시 채점'이 중간에 멈춰 점수가 비어 있던 학생: 이전 AI 판단을 넣어 두고, 아직 남은 작업이면 '다시 채점' 표시
   try {
     const left = new Map(); pendGet().forEach(p => (p.left || []).forEach(no => left.set(p.clsId + ':' + no, 1)));

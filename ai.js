@@ -60,11 +60,11 @@ const AI = (() => {
   function capFor(model) {
     const base = RPM[describe(model).tier] || 9, x = learned().m[model];
     if (!x) return base;
-    return Math.min(base, x.cap + Math.floor((Date.now() - x.at) / 300000)); // 5분마다 1씩 회복
+    return Math.min(base, x.cap + Math.floor((Date.now() - x.at) / 120000)); // 2분마다 1씩 회복
   }
   function learnCap(model) {
     const n = (sent[model] || []).filter(t => Date.now() - t < 60000).length;
-    const l = learned(); l.m[model] = { cap: Math.max(2, Math.min(capFor(model), n) - 1), at: Date.now() };
+    const l = learned(); l.m[model] = { cap: Math.max(4, Math.min(capFor(model), n) - 1), at: Date.now() };
     try { localStorage.setItem(LK, JSON.stringify(l)); } catch (e) {}
   }
   async function throttle(model, signal) {
@@ -101,7 +101,8 @@ const AI = (() => {
       const onAbort = () => ac.abort();
       if (signal) { if (signal.aborted) ac.abort(); else signal.addEventListener('abort', onAbort); }
       let slow = false, timer = null;
-      if (opts.firstMs) timer = setTimeout(() => { slow = true; ac.abort(); }, opts.firstMs);
+      const capMs = opts.firstMs || opts.maxMs || (stream ? 0 : 150000);
+      if (capMs) timer = setTimeout(() => { slow = true; ac.abort(); }, capMs);
       const done = () => { clearTimeout(timer); timer = null; };
       const slowNext = () => {
         const next = fallback(model, tried, true);
@@ -185,7 +186,7 @@ const AI = (() => {
         const det = JSON.stringify((errj && errj.details) || []) + ' ' + msg;
         const perDay = /PerDay|per day|daily/i.test(det);
         const rd = Number((det.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/) || [])[1]);
-        if (!perDay) learnCap(model); // 다음부터는 1분에 그보다 적게 보낸다
+        if (!perDay && /request/i.test(det) && !/token/i.test(det)) learnCap(model); // 요청 수 한도일 때만: 다음부터 1분에 그보다 적게
         // 분당 한도: Flash-Lite 는 잠깐 기다렸다 그대로(Flash 의 적은 하루 한도를 아낌), 다른 모델은 여유 있는 모델로 바로
         if (!perDay && describe(model).tier !== 'flash-lite') {
           const alt = fallback(model, tried);
