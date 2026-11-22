@@ -633,8 +633,9 @@ function classBadge(task, cls) {
 const courseKey = c => String(c.name || '').replace(/\s|\(.*?\)/g, '').toLowerCase();
 function sameCourse(a, b) {
   if (!courseKey(a) || courseKey(a) !== courseKey(b)) return false;
-  if (a.year && b.year && String(a.year) !== String(b.year)) return false;
-  if (a.semester && b.semester && String(a.semester) !== String(b.semester)) return false;
+  const d = v => String(v || '').replace(/\D/g, ''); // '2' 와 '2학기', '1' 과 '1학년'은 같게
+  if (d(a.year) && d(b.year) && d(a.year) !== d(b.year)) return false;
+  if (d(a.semester) && d(b.semester) && d(a.semester) !== d(b.semester)) return false;
   return true;
 }
 // 이미 둘로 나뉜 같은 과목은 하나로 모은다(앞에 있는 과목에 수행평가를 옮김)
