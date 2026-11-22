@@ -1211,7 +1211,7 @@ function vPages(kid) {
       <img data-thumb="${p.id}:t" alt="" data-act="bigpage" data-i="${i}" draggable="false">
       <button class="pchk" data-pchk="${i}" title="고르기 (Ctrl·Shift 를 누르고 쪽을 눌러도 돼요)">${on ? ic('check') : ''}</button>
       ${s ? `<span class="badge">${s.no}번</span>` : w ? `<span class="badge sub">${w.no}번 ${w.k}/${w.n}</span>` : ''}
-      <div class="tools"><button class="rot" data-act="prot" data-i="${i}" title="이 쪽을 시계 방향으로 90° 돌리기">↻</button>${nextBtn || startBtn}<button data-act="togskip" data-i="${i}">${p.skip ? '되살리기' : '빼기'}</button></div>
+      <div class="tools"><button class="rot" data-act="prot" data-i="${i}" title="이 쪽을 시계 방향으로 90° 돌리기">↻</button>${nextBtn || startBtn}${!p.skip && w && w.n > 1 ? `<button data-act="detach" data-i="${i}" title="이 쪽을 ${w.no}번에서 떼어 따로 둬요(지워지지 않아요)">빼기</button>` : `<button data-act="togskip" data-i="${i}" title="${p.skip ? '다시 채점에 넣기' : '이 쪽을 채점에서 빼기(그림은 남음)'}">${p.skip ? '되살리기' : '제외'}</button>`}</div>
       <div class="cap"><span>${i + 1}쪽</span>${s ? `<span>번호 <input class="ptinput" style="width:46px" type="number" value="${s.no}" data-act="setno" data-i="${i}"></span>` : ''}</div>
     </div>`;
   }).join('');
@@ -1221,7 +1221,7 @@ function vPages(kid) {
       <label>쪽 번호 <input class="in num" id="pmto" type="number" min="1" max="${cls.pages.length}" placeholder="몇"></label>
       <button class="btn sm" data-act="pmove" data-w="before">그 쪽 앞으로</button><button class="btn sm" data-act="pmove" data-w="after">그 쪽 뒤로</button>
       <button class="btn sm" data-act="protsel" data-d="270" title="왼쪽으로 90°">↺</button><button class="btn sm" data-act="protsel" data-d="90" title="오른쪽으로 90°">↻ 돌리기</button><button class="btn sm" data-act="protsel" data-d="180">180°</button>
-      <button class="btn sm" data-act="pskip" title="채점에서만 빼기(그림은 남음)">빼기</button><button class="btn sm danger" data-act="pdel" title="고른 쪽 그림을 지워요(Ctrl+Z 되돌리기)">${ic('trash')}지우기</button><button class="btn sm ghost" data-act="pall" title="Ctrl+A">모두 고르기</button><button class="btn sm ghost" data-act="pclear" title="Esc · 빈 곳 누르기">고르기 풀기</button></div>`;
+      <button class="btn sm" data-act="pskip" title="채점에서만 빼기(그림은 남음)">채점 제외</button><button class="btn sm danger" data-act="pdel" title="고른 쪽 그림을 지워요(Ctrl+Z 되돌리기)">${ic('trash')}지우기</button><button class="btn sm ghost" data-act="pall" title="Ctrl+A">모두 고르기</button><button class="btn sm ghost" data-act="pclear" title="Esc · 빈 곳 누르기">고르기 풀기</button></div>`;
   after = () => {
     loadThumbs();
     $$('[data-act="setno"]').forEach(el => el.addEventListener('change', () => {
@@ -1264,7 +1264,7 @@ function vPages(kid) {
     ${over.length ? `<p class="note" style="margin-top:12px">답안이 학생 수보다 많아요(${over.map(s => s.no + '번').join(', ')}). 쪽 수나 빼야 할 쪽을 확인하세요.</p>` : ''}
     ${!cls.masks.length ? `<p class="note blue" style="margin-top:12px">AI 로 보내기 전에 <b>이름 칸 가리기</b>를 해 주세요.</p>` : ''}
   </div>
-  <p class="small muted" style="margin:0 0 8px">쪽을 <b>끌어서</b> 옮겨요. 이어붙인 학생은 <b>쪽들이 함께</b> 움직이고, 한 쪽만 옮기려면 네모로 고른 뒤 끌어요(또는 Alt+끌기). 여러 쪽은 네모(또는 <b>Ctrl·Shift + 누르기</b>)로 골라 함께 끌고, <b>빈 곳</b>이나 <b>Esc</b>로 풀어요. <b>Ctrl+A</b> 모두 · <b>Delete</b> 지우기. 쪽의 <b>오른쪽</b>에 놓으면 그 학생에 붙고, 학생 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생으로 들어가요. 학생의 마지막 쪽 <b>→N번</b> = 그 쪽을 뒤 학생에게, 쪽을 고른 뒤 <b>학생 N번에 붙이기</b> = 아무 학생에게.</p>
+  <p class="small muted" style="margin:0 0 8px">쪽을 <b>끌어서</b> 옮겨요. 이어붙인 학생은 <b>쪽들이 함께</b> 움직이고, 한 쪽만 옮기려면 네모로 고른 뒤 끌어요(또는 Alt+끌기). 여러 쪽은 네모(또는 <b>Ctrl·Shift + 누르기</b>)로 골라 함께 끌고, <b>빈 곳</b>이나 <b>Esc</b>로 풀어요. <b>Ctrl+A</b> 모두 · <b>Delete</b> 지우기. 쪽의 <b>오른쪽</b>에 놓으면 그 학생에 붙고, 학생 첫 쪽의 <b>왼쪽</b>에 놓으면 새 학생으로 들어가요. 학생의 마지막 쪽 <b>→N번</b> = 그 쪽을 뒤 학생에게, 쪽을 고른 뒤 <b>학생 N번에 붙이기</b> = 아무 학생에게. <b>빼기</b> = 학생에서 떼어 따로 두기, <b>제외</b> = 채점에서 빼기.</p>
   ${selBar}
   <div class="thumbs" id="thumbs">${thumbs}</div>`;
 }
@@ -2931,6 +2931,22 @@ const ACT = {
     undoToast('답안 그림을 모두 지웠어요. 새 파일을 올리세요.');
   },
   replacefiles(el) { filePick(true, el.dataset.id, true); },
+  detach(el) {
+    const { cls } = gPages(); const pi = Number(el.dataset.i), pid = cls.pages[pi].id;
+    const g = cls.subs.find(x => x.pages.includes(pi)); if (!g || g.pages.length < 2) return;
+    snap(`${pi + 1}쪽 떼기`);
+    const no = g.no, rest = g.pages.filter(x => x !== pi).map(x => cls.pages[x].id), last = g.pages[g.pages.length - 1];
+    if (pi !== last) reorderInGroup(cls, g, pi, last, true); // 그 학생의 맨 뒤로 옮긴 뒤 떼기(나머지 쪽은 한 학생으로 남음)
+    const ni = cls.pages.findIndex(p => p.id === pid);
+    if (!cls.starts.includes(ni)) cls.starts.push(ni);
+    rebuildSubs(cls);
+    // 남은 쪽은 원래 번호, 뗀 쪽은 빈 번호
+    const remain = cls.subs.find(x => x.pages.some(i => rest.includes(cls.pages[i].id)));
+    if (remain && remain.no !== no) { const other = cls.subs.find(x => x !== remain && x.no === no); if (other) other.no = remain.no; remain.no = no; }
+    const mine = cls.subs.find(x => x.pages.includes(ni));
+    save(); rerender();
+    toast(`${pi + 1}쪽을 ${no}번에서 떼어 ${mine ? mine.no + '번으로 ' : ''}따로 뒀어요. 다른 학생에 붙이려면 →N번·이어붙이기, 채점에서 빼려면 '제외'.`, 4500);
+  },
   togskip(el) { const { cls } = gPages(); snap(`${Number(el.dataset.i) + 1}쪽 ${cls.pages[Number(el.dataset.i)].skip ? '되살리기' : '빼기'}`); const p = cls.pages[Number(el.dataset.i)]; p.skip = !p.skip; rebuildSubs(cls); save(); rerender(); },
   togabsent(el) {
     const { cls } = gPages(); const no = Number(el.dataset.no); const s = stu(cls, no);
