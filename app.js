@@ -2211,7 +2211,7 @@ function renderJobs() {
   box.innerHTML = JOBS.map(j => {
     if (j.resume) return `<div class="job resume">
       <div class="jh"><b>${esc(j.title)}</b><span class="sp"></span><button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button></div>
-      <div class="jm">${j.resume.wait ? '한도를 기다리다 창이 닫혔어요' : '지난번에 창을 닫아 멈췄습니다'} · 남은 ${j.left}명</div>
+      <div class="jm">${j.resume.spend ? `이번 달 지출 한도로 멈춤 · ${spendRetry()} 이후 다시 시도하세요(지출 한도를 올리거나 무료 키로 바꾸면 바로 가능)` : j.resume.wait ? '한도를 기다리다 창이 닫혔어요' : '지난번에 창을 닫아 멈췄습니다'} · 남은 ${j.left}명</div>
       <div class="row" style="gap:6px"><button class="btn sm primary" data-act="jobresume" data-j="${j.id}">이어서 하기</button>
         <a class="btn sm" href="#/k/${j.resume.clsId}">반 화면</a></div></div>`;
     const n = j.ok + j.fail, pct = j.total ? Math.round(n / j.total * 100) : 0;
@@ -2298,6 +2298,11 @@ function keyJob(task, cls, then) {
     }
   } });
 }
+function spendRetry() {
+  const at = AI.resetAt(), now = new Date();
+  const m = now.getMonth() + 2 > 12 ? 1 : now.getMonth() + 2;
+  return `${m}월 1일 ${at.toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}`;
+}
 // 한도 오류의 종류: minute(분당) · day(하루) · spend(월 지출 한도) · null(한도 아님)
 function quotaKind(msg) {
   msg = String(msg || '');
@@ -2308,14 +2313,15 @@ function quotaKind(msg) {
 }
 // 한도가 풀릴 때까지 기다린다(분당 1분, 하루·월 한도는 5분마다 다시 시도). 멈추기를 누르면 그만
 async function waitQuota(j, kind) {
-  const until = kind === 'minute' ? Date.now() + 65000 : Date.now() + 5 * 60000;
+  const until = kind === 'minute' ? Date.now() + 65000 : kind === 'day' ? AI.resetAt().getTime() + 30000 : Date.now() + 5 * 60000;
   const what = kind === 'minute' ? '분당 한도' : kind === 'day' ? `하루 한도(${AI.resetAt().toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}에 다시 채워짐)` : '이번 달 지출 한도';
   j.waitKind = kind;
   await new Promise(res => {
     const tick = () => {
       if (j.ctl.signal.aborted) { clearInterval(t); res(); return; }
       const left = Math.max(0, until - Date.now()), mm = Math.floor(left / 60000), ss = Math.round(left % 60000 / 1000);
-      j.phase = `⏳ ${what}에 걸려 기다리는 중 — ${mm ? mm + '분 ' : ''}${ss}초 뒤 이어서 (성공 ${j.ok} · 남은 ${j.left.length}명)`;
+      const hh = Math.floor(mm / 60);
+      j.phase = `⏳ ${what} — ${hh ? hh + '시간 ' + (mm % 60) + '분' : (mm ? mm + '분 ' : '') + ss + '초'} 뒤 저절로 다시 시도해요 (성공 ${j.ok} · 남은 ${j.left.length}명)`;
       renderJobs();
       if (!left) { clearInterval(t); res(); }
     };
@@ -2348,6 +2354,9 @@ async function runBatch(title, items, fn, opt = {}) {
         catch (e) {
           if (e.name === 'AbortError') break;
           const kind = quotaKind(e.message);
+          if (kind === 'spend') { // 이번 달엔 기다려도 안 풀림 → 멈추고 다시 할 때를 알려 줌
+            q.unshift(it); pendLeft(j, false); j.spend = true; j.log.push(`${it}번에서 멈춤: 이번 달 지출 한도`); j.ctl.abort(); break;
+          }
           if (kind) { // 한도: 그 학생을 다시 맨 앞에 두고 기다렸다가 이어서
             q.unshift(it); pendLeft(j, true);
             if (!waiting) { j.log.push(`${it}번에서 한도 대기: ${e.message}`); waiting = waitQuota(j, kind).finally(() => { waiting = null; pendLeft(j, false); }); }
@@ -2361,7 +2370,13 @@ async function runBatch(title, items, fn, opt = {}) {
     await Promise.all([worker(), worker()]);
   } catch (e) { j.log.push('멈춤: ' + e.message); j.ctl.abort(); }
   BUSY--;
-  j.done = true; j.stopped = j.ctl.signal.aborted; j.phase = ''; save(true); pendDel(j.key); renderJobs();
+  j.done = true; j.stopped = j.ctl.signal.aborted; j.phase = ''; save(true);
+  if (j.spend && j.left && j.left.length) { // 남은 학생을 '이어서 하기' 카드로 남긴다
+    const p = pendGet().find(x => x.key === j.key);
+    if (p) { p.spend = true; pendSet(pendGet().map(x => x.key === j.key ? p : x)); const k = JOBS.indexOf(j); if (k >= 0) JOBS.splice(k, 1, { id: uid(), key: p.key, title: p.title.replace(/ — \d+명$/, ''), resume: p, left: j.left.length, done: true, ok: 0, fail: 0, log: [], total: 0 }); }
+    { renderJobs(); if (opt.clsId) softRefresh(opt.clsId); toast(`이번 달 지출 한도에 닿아 멈췄어요. ${spendRetry()} 이후 다시 시도해 주세요(남은 ${j.left.length}명은 '이어서 하기').`, 9000); return; }
+  }
+  pendDel(j.key); renderJobs();
   if (opt.clsId) softRefresh(opt.clsId);
   toast(`${title}: ${j.stopped ? '멈춤' : '끝'} — 성공 ${j.ok}, 실패 ${j.fail}`, 4000);
   // 실패 없이 끝난 판은 1분 뒤 저절로 치운다
