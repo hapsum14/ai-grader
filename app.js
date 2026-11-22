@@ -2209,7 +2209,7 @@ function renderJobs() {
   let box = $('#jobs');
   if (!box) { box = document.createElement('div'); box.id = 'jobs'; document.body.appendChild(box); }
   box.innerHTML = JOBS.map(j => {
-    if (j.resume) return `<div class="job resume">
+    if (j.resume) return `<div class="job jresume">
       <div class="jh"><b>${esc(j.title)}</b><span class="sp"></span><button class="ibtn" data-act="jobclose" data-j="${j.id}" title="닫기">✕</button></div>
       <div class="jm">${j.resume.spend ? `이번 달 지출 한도로 멈춤 · ${spendRetry()} 이후 다시 시도하세요(지출 한도를 올리거나 무료 키로 바꾸면 바로 가능)` : j.resume.wait ? '한도를 기다리다 창이 닫혔어요' : '지난번에 창을 닫아 멈췄습니다'} · 남은 ${j.left}명</div>
       <div class="row" style="gap:6px"><button class="btn sm primary" data-act="jobresume" data-j="${j.id}">이어서 하기</button>

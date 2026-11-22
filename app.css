@@ -893,3 +893,5 @@ h1.cname .ibtn{opacity:.45} h1.cname:hover .ibtn{opacity:1}
 
 .tools .selhint{white-space:nowrap}
 @media (max-width:1100px){.tools .selhint{display:none}}
+
+.job.jresume .jm{line-height:1.5}
