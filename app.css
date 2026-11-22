@@ -922,3 +922,5 @@ body.dark .kbadge.ok,[data-theme=dark] .kbadge.ok{background:rgba(60,190,110,.18
 
 /* 작업 카드 제목: 수행평가 이름이 길어도 두 줄까지 보이게 */
 .job .jh b{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.35}
+
+.th .tools .tonext{color:var(--accent);font-weight:700}
