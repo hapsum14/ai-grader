@@ -27,12 +27,30 @@ const gateOK = () => { try { return localStorage.getItem(GATE_K) === GATE_H || s
 const VIS_NS = 'hapsum14-aigrader', VIS_K = 'aigrader-visit';
 async function visits() {
   const d = new Date(), day = `d${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-  let last = 0; try { last = Number(localStorage.getItem(VIS_K)) || 0; } catch (e) {}
+  let last = 0, memo = null;
+  try { last = Number(localStorage.getItem(VIS_K)) || 0; memo = JSON.parse(localStorage.getItem(VIS_K + '-n') || 'null'); } catch (e) {}
   const hit = Date.now() - last > 30 * 60 * 1000 && !/^(localhost|127\.)/.test(location.hostname); // 내 컴퓨터에서 시험할 때는 세지 않음
-  const get = async k => { try { const r = await fetch(`https://abacus.jasoncameron.dev/${hit ? 'hit' : 'get'}/${VIS_NS}/${k}`); const j = await r.json(); return Number(j.value) || 0; } catch (e) { return null; } };
-  const [total, today] = await Promise.all([get('total'), get(day)]);
+  // 실패(서버 오류·요청 제한·네트워크)는 0 이 아니라 null → 지난번 숫자를 보여 준다. 없는 열쇠(오늘 첫 방문 전)만 0
+  const get = async (k, h) => {
+    for (let t = 0; t < 2; t++) {
+      try {
+        const r = await fetch(`https://abacus.jasoncameron.dev/${h ? 'hit' : 'get'}/${VIS_NS}/${k}`);
+        if (r.status === 404 && !h) return 0;
+        if (r.ok) { const j = await r.json(); if (typeof j.value === 'number') return j.value; }
+      } catch (e) {}
+      await new Promise(res => setTimeout(res, 1500));
+    }
+    return null;
+  };
+  let [total, today] = await Promise.all([get('total', hit), get(day, hit)]);
   if (hit && total != null) try { localStorage.setItem(VIS_K, String(Date.now())); } catch (e) {}
-  return { total, today };
+  // 카운터는 줄지 않으니 지난번 숫자보다 작으면(실패·지연) 지난번 숫자로
+  if (memo) {
+    if (total == null || total < memo.total) total = memo.total;
+    if (memo.day === day && (today == null || today < memo.today)) today = memo.today;
+  }
+  if (total != null) try { localStorage.setItem(VIS_K + '-n', JSON.stringify({ total, today: today || 0, day })); } catch (e) {}
+  return { total, today: today || 0 };
 }
 function visHTML(v) { return v && v.total != null ? `<span title="전체 방문">${ic('users')}전체 <b>${v.total.toLocaleString()}</b></span><span title="오늘 방문">${ic('sun')}오늘 <b>${(v.today || 0).toLocaleString()}</b></span>` : ''; }
 let VISITS = null;
