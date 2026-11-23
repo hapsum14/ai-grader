@@ -761,7 +761,16 @@ function route(opt = {}) {
   if (after) after();
   fillPeek();
 }
-function rerender() { const y = window.scrollY; const side = $('.gside'); const sy = side && side.scrollTop; route({ keepSide: true }); window.scrollTo(0, y); const s2 = $('.gside'); if (s2 && sy != null) s2.scrollTop = sy; }
+function rerender() {
+  const y = window.scrollY; const side = $('.gside'); const sy = side && side.scrollTop;
+  const vp = $('#vpage'); G.keepView = { y, vt: vp ? vp.scrollTop : null, vl: vp ? vp.scrollLeft : null, at: Date.now() };
+  route({ keepSide: true }); window.scrollTo(0, y); const s2 = $('.gside'); if (s2 && sy != null) s2.scrollTop = sy;
+  const v2 = $('#vpage'); if (v2 && G.keepView.vt != null) { v2.scrollTop = G.keepView.vt; v2.scrollLeft = G.keepView.vl; }
+}
+function restoreView() {
+  const k = G.keepView; if (!k || Date.now() - k.at > 3000) return; G.keepView = null;
+  window.scrollTo(0, k.y); const vp = $('#vpage'); if (vp && k.vt != null) { vp.scrollTop = k.vt; vp.scrollLeft = k.vl; }
+}
 window.addEventListener('hashchange', () => { route(); if (!location.hash.startsWith('#/g/')) window.scrollTo(0, 0); });
 
 function closeSheet() { $$('.sg.sheet').forEach(s => s.classList.remove('sheet')); $$('#mnav button').forEach(b => b.classList.remove('open')); $('#mback').classList.remove('on'); }
@@ -1697,7 +1706,7 @@ function vGrade(kid, no) {
         <button data-act="pg" data-d="-1">‹</button>${sub.pages.map((_, j) => `<button class="${j === G.page ? 'on' : ''}" data-act="pgset" data-i="${j}">${j + 1}</button>`).join('')}<button data-act="pg" data-d="1">›</button>
         <span style="opacity:.4">|</span><button data-act="rot" title="돌리기">⟳</button>
         <button data-act="zoom" data-d="0" title="화면에 맞춤">${Math.round(G.zoom * 100)}%</button><button data-act="zoom" data-d="0.15" title="크게">＋</button><button data-act="zoom" data-d="-0.15" title="작게">－</button>
-        <span style="opacity:.4">|</span><button data-act="qadd" class="${G.addMark != null ? 'on' : ''}" title="문항 표시 더하기 — 누른 뒤 답안지에서 자리를 누르세요">${ic('plus')}표시</button>
+        <span style="opacity:.4">|</span><button data-act="qadd" class="${G.addMark != null ? 'on' : ''}" title="문항 표시 더하기 (M) — 마우스를 답안지 위에 두고 M 을 누르면 그 자리에 바로 표시">${ic('plus')}표시</button>
         <button data-act="maskview" class="${G.showMask ? 'on' : ''}" title="AI 로 보내는 모습(이름 가림)">${ic('eye')}</button>
       </div>
       <div class="vpage" id="vpage"><div style="position:relative;display:inline-block" id="vwrap"><img id="vimg" alt="" draggable="false" style="width:${G.zoom * 100}%;transform:rotate(${G.rot}deg)"></div></div>`;
@@ -1732,8 +1741,11 @@ function vGrade(kid, no) {
   after = async () => {
     if (sub && G.tab === 'img') {
       const p = cls.pages[sub.pages[G.page]];
-      $('#vimg').src = await imgURL(p.id);
+      const im = $('#vimg'); im.onload = restoreView; im.src = await imgURL(p.id); if (im.complete) restoreView();
       bindQMarks(s);
+      // 마우스가 답안지 위 어디에 있는지(단축키 M 으로 그 자리에 표시)
+      const wrap = $('#vwrap');
+      if (wrap) { wrap.onmousemove = e => { const r = wrap.getBoundingClientRect(); G.mouse = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; }; wrap.onmouseleave = () => { G.mouse = null; }; }
       if (G.showMask) {
         const wrap = $('#vwrap');
         (cls.masks || []).filter(m => m.page === -1 || m.page === G.page).forEach(m => {
@@ -1772,9 +1784,9 @@ function vGrade(kid, no) {
   </div>
   <div class="gbody">
     <div class="viewer">
-      <div class="vtabs"><button class="vtab ${G.tab === 'img' ? 'on' : ''}" data-act="vtab" data-t="img">원본</button>
-        <button class="vtab ${G.tab === 'txt' ? 'on' : ''}" data-act="vtab" data-t="txt">AI 가 읽은 글</button>
-        <button class="vtab ${G.tab === 'key' ? 'on' : ''}" data-act="vtab" data-t="key" title="이 학생 시험지 형의 정답표 (K)">정답표</button></div>
+      <div class="vtabs"><button class="vtab ${G.tab === 'img' ? 'on' : ''}" data-act="vtab" data-t="img" title="원본 (Q)">원본</button>
+        <button class="vtab ${G.tab === 'txt' ? 'on' : ''}" data-act="vtab" data-t="txt" title="AI 가 읽은 글 (W)">AI 가 읽은 글</button>
+        <button class="vtab ${G.tab === 'key' ? 'on' : ''}" data-act="vtab" data-t="key" title="이 학생 시험지 형의 정답표 (E)">정답표</button></div>
       ${left}
     </div>
     <div class="gside">
@@ -2691,6 +2703,8 @@ const HELP = [
   ['keys', '단축키', `<div class="kgrid">
     <span><span class="kbd">←</span><span class="kbd">→</span></span><span>이전·다음 학생</span>
     <span><span class="kbd">1</span>~<span class="kbd">9</span></span><span>기준 체크</span>
+    <span><span class="kbd">Q</span><span class="kbd">W</span><span class="kbd">E</span></span><span>원본·AI 글·정답표</span>
+    <span><span class="kbd">M</span></span><span>마우스 자리에 표시</span>
     <span><span class="kbd">Ctrl</span><span class="kbd">Enter</span></span><span>완료 후 다음</span>
     <span><span class="kbd">Ctrl</span><span class="kbd">Z</span></span><span>되돌리기</span>
     <span><span class="kbd">/</span></span><span>찾기</span></div>`],
@@ -3335,6 +3349,8 @@ document.addEventListener('keydown', e => {
   const typing = typingAny && document.activeElement.type !== 'checkbox' && document.activeElement.type !== 'radio';
   if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); ACT.finish(); return; }
   if (typing) return;
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && ['KeyQ', 'KeyW', 'KeyE'].includes(e.code)) { e.preventDefault(); G.tab = { KeyQ: 'img', KeyW: 'txt', KeyE: 'key' }[e.code]; G.addMark = null; rerender(); return; }
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'KeyM' || e.key === '+' || e.code === 'NumpadAdd')) { e.preventDefault(); markAtMouse(); return; }
   if (e.key === 'ArrowLeft') ACT.stu({ dataset: { d: -1 } });
   else if (e.key === 'ArrowRight') ACT.stu({ dataset: { d: 1 } });
   else if (e.key === 'Escape') location.hash = '#/k/' + gctx.kid;
@@ -3344,6 +3360,15 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// 마우스가 답안지 위에 있으면 그 자리에 바로 표시, 아니면 '표시' 모드(누른 곳에 표시)
+function markAtMouse() {
+  if (G.tab !== 'img' || G.rot || !G.mouse) { ACT.qadd(); return; }
+  const { x, y } = G.mouse; if (x < 0 || x > 1 || y < 0 || y > 1) { ACT.qadd(); return; }
+  const s = stu(gctx.cls, gctx.no); s.qmarks = s.qmarks || [];
+  const nos = s.qmarks.map(q => parseInt(q.no) || 0);
+  s.qmarks.push({ no: String((Math.max(0, ...nos) || 0) + 1), mark: 'X', reason: '', page: G.page, x, y });
+  s.qmarksEdited = true; G.addMark = null; G.openQ = s.qmarks.length - 1; save(); rerender();
+}
 async function copyText(t) {
   try { await navigator.clipboard.writeText(t); return true; }
   catch (e) {
